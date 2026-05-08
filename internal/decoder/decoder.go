@@ -15,7 +15,6 @@ type Decoder struct {
 	d *marker.Decompressor
 
 	scanData []byte
-	scanPos  int
 
 	permState    huff.BitReadState
 	savedState   huff.SavableState
@@ -24,8 +23,8 @@ type Decoder struct {
 	insufficient bool
 	unreadMarker byte
 
-	dcTables []*huff.DerivedHuffTable
-	acTables []*huff.DerivedHuffTable
+	dcTables      []*huff.DerivedHuffTable
+	acTables      []*huff.DerivedHuffTable
 	mcuMembership []int
 
 	idctMethod huff.IDCTMethod
@@ -34,20 +33,18 @@ type Decoder struct {
 	multTablesIFast []*huff.IFASTMultTable
 	multTablesFloat []*huff.FloatMultTable
 
-	rangeLimit *huff.RangeLimitTable
+	rangeLimit  *huff.RangeLimitTable
 	rlColorConv []byte
 
-	outputBuf [8]huff.BlockRow
-	blocks []huff.Block
+	outputBuf [16]huff.BlockRow
+	blocks    []huff.Block
 
 	quantTables [][huff.DCTSize2]int32
 
 	vCbRow []int
 	vCrRow []int
 
-	colorInfo *color.DecompressInfo
 	colorConv *color.ColorConverter
-	upsampler *color.Upsampler
 
 	componentBuf [][][]byte
 
@@ -55,7 +52,9 @@ type Decoder struct {
 	rowGroupsAvail int
 	currentIMCURow int
 	totalIMCURows  int
-	allDecoded bool
+	allDecoded     bool
+
+	DoFancyUpsampling bool
 }
 
 var (
@@ -63,12 +62,13 @@ var (
 	ErrDecodeFailed    = errors.New("jpeg: decode failed")
 )
 
-const rlColorOffset = 512
+const rlColorOffset = huff.RangeSubset
 
 func New(r io.Reader) *Decoder {
 	d := marker.NewDecompressor()
 	d.SetSource(r)
-	return &Decoder{d: d, idctMethod: huff.IDCTISlow}
+	d.DoFancyUpsampling = true
+	return &Decoder{d: d, idctMethod: huff.IDCTISlow, DoFancyUpsampling: true}
 }
 
 func (dec *Decoder) SetIDCTMethod(method string) {
@@ -80,6 +80,11 @@ func (dec *Decoder) SetIDCTMethod(method string) {
 	default:
 		dec.idctMethod = huff.IDCTISlow
 	}
+}
+
+func (dec *Decoder) SetFancyUpsampling(fancy bool) {
+	dec.DoFancyUpsampling = fancy
+	dec.d.DoFancyUpsampling = fancy
 }
 
 func (dec *Decoder) ReadHeader() (int, int, int, marker.ColorSpace, error) {
@@ -101,6 +106,7 @@ func (dec *Decoder) ReadHeader() (int, int, int, marker.ColorSpace, error) {
 
 func (dec *Decoder) StartDecompress() error {
 	d := dec.d
+	d.DoFancyUpsampling = dec.DoFancyUpsampling
 	if err := d.StartInputPass(); err != nil {
 		return err
 	}
@@ -138,20 +144,20 @@ func (dec *Decoder) StartDecompress() error {
 		return err
 	}
 	huff.InitBitReader(&dec.workState, dec.scanData)
-	dec.setupColorPipeline()
 	if err := d.StartDecompress(); err != nil {
 		return err
 	}
+	dec.setupColorPipeline()
 	dec.totalIMCURows = d.MCURowsInScan
 	dec.currentIMCURow = 0
 	return nil
 }
 
-func (dec *Decoder) OutputWidth() int      { return dec.d.OutputWidth }
-func (dec *Decoder) OutputHeight() int     { return dec.d.OutputHeight }
-func (dec *Decoder) OutputComponents() int { return dec.d.OutputComponents }
+func (dec *Decoder) OutputWidth() int                  { return dec.d.OutputWidth }
+func (dec *Decoder) OutputHeight() int                 { return dec.d.OutputHeight }
+func (dec *Decoder) OutputComponents() int             { return dec.d.OutputComponents }
 func (dec *Decoder) OutColorSpace() marker.ColorSpace  { return dec.d.OutColorSpace }
-func (dec *Decoder) JPEGColorSpace() marker.ColorSpace  { return dec.d.JPEGColorSpace }
+func (dec *Decoder) JPEGColorSpace() marker.ColorSpace { return dec.d.JPEGColorSpace }
 
 func (dec *Decoder) ReadScanlines(scanlines [][]uint8) (int, error) {
 	if dec.d.GlobalState != marker.DStateScanning {
@@ -194,7 +200,11 @@ func (dec *Decoder) FinishDecompress() error {
 }
 
 func (dec *Decoder) readAllScanData() error {
-	var buf []byte
+	capHint := 0
+	if r, ok := dec.d.Src.(interface{ Len() int }); ok {
+		capHint = r.Len()
+	}
+	buf := make([]byte, 0, capHint)
 	readBuf := make([]byte, 8192)
 	for {
 		n, err := io.ReadFull(dec.d.Src, readBuf)
@@ -212,17 +222,30 @@ func (dec *Decoder) readAllScanData() error {
 	i := 0
 	for i < len(buf) {
 		if buf[i] == 0xFF {
-			if i+1 >= len(buf) { end = i; break }
+			if i+1 >= len(buf) {
+				end = i
+				break
+			}
 			next := buf[i+1]
-			if next == 0x00 { i += 2; continue }
-			if next >= 0xD0 && next <= 0xD7 { copy(buf[i:], buf[i+2:]); end -= 2; continue }
-			if next == 0xFF { i++; continue }
-			end = i; break
+			if next == 0x00 {
+				i += 2
+				continue
+			}
+			if next >= 0xD0 && next <= 0xD7 {
+				copy(buf[i:], buf[i+2:])
+				end -= 2
+				continue
+			}
+			if next == 0xFF {
+				i++
+				continue
+			}
+			end = i
+			break
 		}
 		i++
 	}
 	dec.scanData = buf[:end]
-	dec.scanPos = 0
 	return nil
 }
 
@@ -272,6 +295,7 @@ func (dec *Decoder) routeBlocks(blocks []huff.Block, mcuCol int) {
 		}
 		startCol := mcuCol * comp.MCUSampleWidth
 		compBuf := dec.componentBuf[comp.ComponentIndex]
+		numRows := len(compBuf)
 		rowOffset := dec.currentIMCURow * comp.MCUHeight * comp.DCVScaledSize
 		dctSize := comp.DCVScaledSize
 		dctStep := comp.DCHScaledSize
@@ -282,13 +306,20 @@ func (dec *Decoder) routeBlocks(blocks []huff.Block, mcuCol int) {
 				outputBuf := dec.outputBuf[:dctSize]
 				for row := 0; row < dctSize; row++ {
 					bufRow := rowOffset + yIndex*dctSize + row
-					if bufRow < len(compBuf) {
+					if bufRow < numRows {
 						outputBuf[row] = compBuf[bufRow]
+					} else {
+						// Replicate the last valid row
+						outputBuf[row] = compBuf[numRows-1]
 					}
 				}
 				outputCol := startCol
 				for xIndex := 0; xIndex < usefulWidth; xIndex++ {
-					huff.IDCTISlowImpl(blocks[blkIdx+xIndex][:], qt, outputBuf, outputCol, rl)
+					if dctSize == 16 && dctStep == 16 {
+						huff.IDCT16x16Impl(blocks[blkIdx+xIndex][:], qt, outputBuf, outputCol, rl)
+					} else {
+						huff.IDCTISlowImpl(blocks[blkIdx+xIndex][:], qt, outputBuf, outputCol, rl)
+					}
 					outputCol += dctStep
 				}
 				blkIdx += comp.MCUWidth
@@ -325,16 +356,22 @@ func (dec *Decoder) upsampleAndConvert(outputRow []byte) {
 
 	if d.OutputComponents == 1 {
 		rowIdx := dec.rowGroupCtr
-		if rowIdx >= len(dec.componentBuf[0]) { rowIdx = len(dec.componentBuf[0]) - 1 }
+		if rowIdx >= len(dec.componentBuf[0]) {
+			rowIdx = len(dec.componentBuf[0]) - 1
+		}
 		srcRow := dec.componentBuf[0][rowIdx]
 		n := outputWidth
-		if n > len(srcRow) { n = len(srcRow) }
+		if n > len(srcRow) {
+			n = len(srcRow)
+		}
 		copy(outputRow[:n], srcRow[:n])
 		return
 	}
 
 	yRow := dec.rowGroupCtr
-	if yRow >= len(dec.componentBuf[0]) { yRow = len(dec.componentBuf[0]) - 1 }
+	if yRow >= len(dec.componentBuf[0]) {
+		yRow = len(dec.componentBuf[0]) - 1
+	}
 	yData := dec.componentBuf[0][yRow]
 
 	if d.NumComponents < 3 {
@@ -348,8 +385,10 @@ func (dec *Decoder) upsampleAndConvert(outputRow []byte) {
 		return
 	}
 
-	hUpsample := d.CompInfo[0].HSampFactor > d.CompInfo[1].HSampFactor
-	vUpsample := d.CompInfo[0].VSampFactor > d.CompInfo[1].VSampFactor
+	yComp := &d.CompInfo[0]
+	cbComp := &d.CompInfo[1]
+	hUpsample := yComp.HSampFactor*yComp.DCHScaledSize > cbComp.HSampFactor*cbComp.DCHScaledSize
+	vUpsample := yComp.VSampFactor*yComp.DCVScaledSize > cbComp.VSampFactor*cbComp.DCVScaledSize
 
 	cbBuf := dec.componentBuf[1]
 	crBuf := dec.componentBuf[2]
@@ -362,109 +401,138 @@ func (dec *Decoder) upsampleAndConvert(outputRow []byte) {
 	crG := conv.CrGTabInt
 	cbG := conv.CbGTabInt
 
-		if hUpsample && vUpsample {
-			// 4:2:0 h2v2 fancy upsampling: single-pass 2D bilinear filter
-			// matching libjpeg-turbo h2v2_fancy_upsample exactly.
-			// colsum = near*3 + far absorbs vertical weighting.
-			// (thiscolsum*3 + neighbor_colsum + bias) >> 4 absorbs horizontal weighting.
-			// Bias: +8 for even, +7 for odd (ordered dithering).
-			chromaRow := yRow >> 1
-			if chromaRow >= cbBufLen {
-				chromaRow = cbBufLen - 1
-			}
-			nearRow := chromaRow
-			var farRow int
-			if (yRow & 1) == 0 {
-				farRow = chromaRow - 1
-				if farRow < 0 {
-					farRow = 0
-				}
-			} else {
-				farRow = chromaRow + 1
-				if farRow >= cbBufLen {
-					farRow = cbBufLen - 1
-				}
-			}
-			cbNear := cbBuf[nearRow]
-			crNear := crBuf[nearRow]
-			cbFar := cbBuf[farRow]
-			crFar := crBuf[farRow]
-			srcLen := len(cbNear)
-			dstLen := srcLen * 2
-			if dstLen > outputWidth {
-				dstLen = outputWidth
-			}
+	if hUpsample && vUpsample {
+		chromaRow := yRow >> 1
+		if chromaRow >= cbBufLen {
+			chromaRow = cbBufLen - 1
+		}
 
-			// Pre-compute upsampled chroma via colsum algorithm
-			cbUp := make([]int, dstLen)
-			crUp := make([]int, dstLen)
-
-			// First column
-			thisCbCS := int(cbNear[0])*3 + int(cbFar[0])
-			thisCrCS := int(crNear[0])*3 + int(crFar[0])
-			var nextCbCS, nextCrCS int
-			if srcLen > 1 {
-				nextCbCS = int(cbNear[1])*3 + int(cbFar[1])
-				nextCrCS = int(crNear[1])*3 + int(crFar[1])
-			}
-			cbUp[0] = (thisCbCS*4 + 8) >> 4
-			crUp[0] = (thisCrCS*4 + 8) >> 4
-			if dstLen > 1 {
-				cbUp[1] = (thisCbCS*3 + nextCbCS + 7) >> 4
-				crUp[1] = (thisCrCS*3 + nextCrCS + 7) >> 4
-			}
-			lastCbCS := thisCbCS
-			lastCrCS := thisCrCS
-			thisCbCS = nextCbCS
-			thisCrCS = nextCrCS
-
-			// Interior columns
-			for cCol := 1; cCol < srcLen-1; cCol++ {
-				if cCol*2+1 >= dstLen {
-					break
-				}
-				nextCbCS = int(cbNear[cCol+1])*3 + int(cbFar[cCol+1])
-				nextCrCS = int(crNear[cCol+1])*3 + int(crFar[cCol+1])
-				cbUp[cCol*2] = (thisCbCS*3 + lastCbCS + 8) >> 4
-				crUp[cCol*2] = (thisCrCS*3 + lastCrCS + 8) >> 4
-				cbUp[cCol*2+1] = (thisCbCS*3 + nextCbCS + 7) >> 4
-				crUp[cCol*2+1] = (thisCrCS*3 + nextCrCS + 7) >> 4
-				lastCbCS = thisCbCS
-				lastCrCS = thisCrCS
-				thisCbCS = nextCbCS
-				thisCrCS = nextCrCS
-			}
-
-			// Last column
-			if srcLen > 1 && dstLen >= 2 {
-				lastIdx := dstLen - 1
-				cbUp[lastIdx-1] = (thisCbCS*3 + lastCbCS + 8) >> 4
-				crUp[lastIdx-1] = (thisCrCS*3 + lastCrCS + 8) >> 4
-				cbUp[lastIdx] = (thisCbCS*4 + 7) >> 4
-				crUp[lastIdx] = (thisCrCS*4 + 7) >> 4
-			}
-
-			// Apply color conversion
+		if !dec.DoFancyUpsampling {
+			cbRow := cbBuf[chromaRow]
+			crRow := crBuf[chromaRow]
 			for col := 0; col < outputWidth; col++ {
 				y := int(yData[col])
-				uCol := col
-				if uCol >= dstLen {
-					uCol = dstLen - 1
+				cCol := col >> 1
+				if cCol >= len(cbRow) {
+					cCol = len(cbRow) - 1
 				}
-				r := y + crR[crUp[uCol]]
-				g := y + (cbG[cbUp[uCol]] + crG[crUp[uCol]])>>16
-				b := y + cbB[cbUp[uCol]]
+				cb := int(cbRow[cCol])
+				cr := int(crRow[cCol])
+				r := y + crR[cr]
+				g := y + ((cbG[cb] + crG[cr]) >> 16)
+				b := y + cbB[cb]
 				idx := col * 3
 				outputRow[idx] = rl[r+rlColorOffset]
 				outputRow[idx+1] = rl[g+rlColorOffset]
 				outputRow[idx+2] = rl[b+rlColorOffset]
 			}
-	
+			return
+		}
+
+		// 4:2:0 h2v2 fancy upsampling: single-pass 2D bilinear filter
+		// matching libjpeg-turbo h2v2_fancy_upsample exactly.
+		// colsum = near*3 + far absorbs vertical weighting.
+		// (thiscolsum*3 + neighbor_colsum + bias) >> 4 absorbs horizontal weighting.
+		// Bias: +8 for even, +7 for odd (ordered dithering).
+		nearRow := chromaRow
+		var farRow int
+		if (yRow & 1) == 0 {
+			farRow = chromaRow - 1
+			if farRow < 0 {
+				farRow = 0
+			}
+		} else {
+			farRow = chromaRow + 1
+			if farRow >= cbBufLen {
+				farRow = cbBufLen - 1
+			}
+		}
+		cbNear := cbBuf[nearRow]
+		crNear := crBuf[nearRow]
+		cbFar := cbBuf[farRow]
+		crFar := crBuf[farRow]
+		srcLen := len(cbNear)
+		dstLen := srcLen * 2
+		if dstLen > outputWidth {
+			dstLen = outputWidth
+		}
+
+		// Pre-compute upsampled chroma via colsum algorithm.
+		if cap(dec.vCbRow) < dstLen {
+			dec.vCbRow = make([]int, dstLen)
+			dec.vCrRow = make([]int, dstLen)
+		}
+		cbUp := dec.vCbRow[:dstLen]
+		crUp := dec.vCrRow[:dstLen]
+
+		// First column
+		thisCbCS := int(cbNear[0])*3 + int(cbFar[0])
+		thisCrCS := int(crNear[0])*3 + int(crFar[0])
+		var nextCbCS, nextCrCS int
+		if srcLen > 1 {
+			nextCbCS = int(cbNear[1])*3 + int(cbFar[1])
+			nextCrCS = int(crNear[1])*3 + int(crFar[1])
+		}
+		cbUp[0] = (thisCbCS*4 + 8) >> 4
+		crUp[0] = (thisCrCS*4 + 8) >> 4
+		if dstLen > 1 {
+			cbUp[1] = (thisCbCS*3 + nextCbCS + 7) >> 4
+			crUp[1] = (thisCrCS*3 + nextCrCS + 7) >> 4
+		}
+		lastCbCS := thisCbCS
+		lastCrCS := thisCrCS
+		thisCbCS = nextCbCS
+		thisCrCS = nextCrCS
+
+		// Interior columns
+		for cCol := 1; cCol < srcLen-1; cCol++ {
+			if cCol*2+1 >= dstLen {
+				break
+			}
+			nextCbCS = int(cbNear[cCol+1])*3 + int(cbFar[cCol+1])
+			nextCrCS = int(crNear[cCol+1])*3 + int(crFar[cCol+1])
+			cbUp[cCol*2] = (thisCbCS*3 + lastCbCS + 8) >> 4
+			crUp[cCol*2] = (thisCrCS*3 + lastCrCS + 8) >> 4
+			cbUp[cCol*2+1] = (thisCbCS*3 + nextCbCS + 7) >> 4
+			crUp[cCol*2+1] = (thisCrCS*3 + nextCrCS + 7) >> 4
+			lastCbCS = thisCbCS
+			lastCrCS = thisCrCS
+			thisCbCS = nextCbCS
+			thisCrCS = nextCrCS
+		}
+
+		// Last column
+		if srcLen > 1 && dstLen >= 2 {
+			lastIdx := dstLen - 1
+			cbUp[lastIdx-1] = (thisCbCS*3 + lastCbCS + 8) >> 4
+			crUp[lastIdx-1] = (thisCrCS*3 + lastCrCS + 8) >> 4
+			cbUp[lastIdx] = (thisCbCS*4 + 7) >> 4
+			crUp[lastIdx] = (thisCrCS*4 + 7) >> 4
+		}
+
+		// Apply color conversion
+		for col := 0; col < outputWidth; col++ {
+			y := int(yData[col])
+			uCol := col
+			if uCol >= dstLen {
+				uCol = dstLen - 1
+			}
+			r := y + crR[crUp[uCol]]
+			g := y + (cbG[cbUp[uCol]]+crG[crUp[uCol]])>>16
+			b := y + cbB[cbUp[uCol]]
+			idx := col * 3
+			outputRow[idx] = rl[r+rlColorOffset]
+			outputRow[idx+1] = rl[g+rlColorOffset]
+			outputRow[idx+2] = rl[b+rlColorOffset]
+		}
+
 	} else if hUpsample {
-		vSampCb := d.CompInfo[1].VSampFactor
-		vSampY := d.CompInfo[0].VSampFactor
-		cbRow := cbBuf[yRow*vSampCb/vSampY]
-		crRow := crBuf[yRow*vSampCb/vSampY]
+		chromaRow := yRow
+		if chromaRow >= cbBufLen {
+			chromaRow = cbBufLen - 1
+		}
+		cbRow := cbBuf[chromaRow]
+		crRow := crBuf[chromaRow]
 		for col := 0; col < outputWidth; col++ {
 			y := int(yData[col])
 			cCol := col >> 1
@@ -480,7 +548,9 @@ func (dec *Decoder) upsampleAndConvert(outputRow []byte) {
 		}
 	} else if vUpsample {
 		chromaRow := yRow >> 1
-		if chromaRow >= cbBufLen { chromaRow = cbBufLen - 1 }
+		if chromaRow >= cbBufLen {
+			chromaRow = cbBufLen - 1
+		}
 		cbRow := cbBuf[chromaRow]
 		crRow := crBuf[chromaRow]
 		for col := 0; col < outputWidth; col++ {
@@ -496,10 +566,12 @@ func (dec *Decoder) upsampleAndConvert(outputRow []byte) {
 			outputRow[idx+2] = rl[b+rlColorOffset]
 		}
 	} else {
-		vSampCb := d.CompInfo[1].VSampFactor
-		vSampY := d.CompInfo[0].VSampFactor
-		cbRow := cbBuf[yRow*vSampCb/vSampY]
-		crRow := crBuf[yRow*vSampCb/vSampY]
+		chromaRow := yRow
+		if chromaRow >= cbBufLen {
+			chromaRow = cbBufLen - 1
+		}
+		cbRow := cbBuf[chromaRow]
+		crRow := crBuf[chromaRow]
 		for col := 0; col < outputWidth; col++ {
 			y := int(yData[col])
 			cb := int(cbRow[col])
@@ -532,9 +604,13 @@ func (dec *Decoder) buildHuffmanTables() error {
 			dec.dcTables[blkn] = derivedDC
 		} else {
 			dcTbl := d.DCHuffTbls[dcTblNo]
-			if dcTbl == nil { return errors.New("jpeg: missing DC Huffman table") }
+			if dcTbl == nil {
+				return errors.New("jpeg: missing DC Huffman table")
+			}
 			derivedDC, err := huff.MakeDerivedHuffTable(convertHuffTable(dcTbl))
-			if err != nil { return err }
+			if err != nil {
+				return err
+			}
 			dcCache[dcTblNo] = derivedDC
 			dec.dcTables[blkn] = derivedDC
 		}
@@ -544,9 +620,13 @@ func (dec *Decoder) buildHuffmanTables() error {
 			dec.acTables[blkn] = derivedAC
 		} else {
 			acTbl := d.ACHuffTbls[acTblNo]
-			if acTbl == nil { return errors.New("jpeg: missing AC Huffman table") }
+			if acTbl == nil {
+				return errors.New("jpeg: missing AC Huffman table")
+			}
 			derivedAC, err := huff.MakeDerivedHuffTable(convertHuffTable(acTbl))
-			if err != nil { return err }
+			if err != nil {
+				return err
+			}
 			acCache[acTblNo] = derivedAC
 			dec.acTables[blkn] = derivedAC
 		}
@@ -655,16 +735,13 @@ func (dec *Decoder) setupColorPipeline() {
 		info.CurCompInfo[ci] = &info.CompInfo[d.CurCompInfo[ci].ComponentIndex]
 	}
 
-	dec.colorInfo = info
 	dec.colorConv = color.NewColorConverter(info)
-	dec.upsampler = color.NewUpsampler(info, dec.colorConv)
-	dec.upsampler.StartPass()
 
 	dec.componentBuf = make([][][]byte, d.NumComponents)
 	for ci := 0; ci < d.NumComponents; ci++ {
-		src := &d.CompInfo[ci]
-		rowWidth := src.WidthInBlocks * src.DCHScaledSize
-		numRows := src.HeightInBlocks * src.DCVScaledSize
+		comp := &info.CompInfo[ci]
+		rowWidth := info.MCUsPerRow * comp.MCUWidth * comp.DCTHScalSize
+		numRows := info.TotalIMCURows * comp.MCUHeight * comp.DCTVScalSize
 		flatBuf := make([]byte, numRows*rowWidth)
 		dec.componentBuf[ci] = make([][]byte, numRows)
 		for r := 0; r < numRows; r++ {
@@ -688,17 +765,25 @@ func convertHuffTable(mt *marker.HuffTable) *huff.HuffmanTable {
 func DecodeToRGB(r io.Reader) (pixels []byte, width, height, components int, err error) {
 	dec := New(r)
 	w, h, _, _, err := dec.ReadHeader()
-	if err != nil { return nil, 0, 0, 0, err }
+	if err != nil {
+		return nil, 0, 0, 0, err
+	}
 	width, height = w, h
-	if err := dec.StartDecompress(); err != nil { return nil, 0, 0, 0, err }
+	if err := dec.StartDecompress(); err != nil {
+		return nil, 0, 0, 0, err
+	}
 	components = dec.OutputComponents()
 	rowStride := width * components
 	pixels = make([]byte, height*rowStride)
 	scanline := make([]byte, rowStride)
 	for y := 0; y < height; y++ {
 		n, err := dec.ReadScanlines([][]byte{scanline})
-		if err != nil { return nil, 0, 0, 0, err }
-		if n == 0 { break }
+		if err != nil {
+			return nil, 0, 0, 0, err
+		}
+		if n == 0 {
+			break
+		}
 		copy(pixels[y*rowStride:], scanline)
 	}
 	dec.FinishDecompress()

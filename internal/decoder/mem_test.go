@@ -7,15 +7,11 @@ import (
 	"testing"
 )
 
-// loadTestJPEG loads a test JPEG file from the project root.
+// loadTestJPEG loads a test JPEG fixture from testdata.
 func loadTestJPEG(name string) []byte {
-	data, err := os.ReadFile("../../" + name)
+	data, err := os.ReadFile("../../testdata/" + name)
 	if err != nil {
-		// Try current directory as fallback
-		data, err = os.ReadFile(name)
-		if err != nil {
-			return nil
-		}
+		return nil
 	}
 	return data
 }

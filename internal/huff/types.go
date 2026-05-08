@@ -14,29 +14,29 @@ package huff
 // Constants from IJG libjpeg.
 
 const (
-	DCTSize       = 8             // DCTSIZE in IJG
-	DCTSize2      = 64            // DCTSIZE2 = 8*8
-	MaxCompsInScan = 4            // MAX_COMPS_IN_SCAN
-	NumHuffTbls   = 4             // NUM_HFF_TBLS
-	NumArithTbls  = 4             // NUM_ARITH_TBLS
-	DMaxBlocksInMCU = 10          // D_MAX_BLOCKS_IN_MCU
+	DCTSize         = 8  // DCTSIZE in IJG
+	DCTSize2        = 64 // DCTSIZE2 = 8*8
+	MaxCompsInScan  = 4  // MAX_COMPS_IN_SCAN
+	NumHuffTbls     = 4  // NUM_HFF_TBLS
+	NumArithTbls    = 4  // NUM_ARITH_TBLS
+	DMaxBlocksInMCU = 10 // D_MAX_BLOCKS_IN_MCU
 
 	// Bit-reading constants
-	HuffLookahead = 8             // # of bits of lookahead
-	BitBufSize    = 32            // size of buffer in bits
+	HuffLookahead = 8  // # of bits of lookahead
+	BitBufSize    = 32 // size of buffer in bits
 
 	// Range limit constants (matching IJG libjpeg)
-	CenterJSample = 128           // CENTERJSAMPLE
-	RangeBits     = 2             // RANGE_BITS
-	RangeCenter   = CenterJSample << RangeBits // RANGE_CENTER = 512
-	RangeMask     = RangeCenter*2 - 1          // RANGE_MASK = 1023
+	CenterJSample = 128                         // CENTERJSAMPLE
+	RangeBits     = 2                           // RANGE_BITS
+	RangeCenter   = CenterJSample << RangeBits  // RANGE_CENTER = 512
+	RangeMask     = RangeCenter*2 - 1           // RANGE_MASK = 1023
 	RangeSubset   = RangeCenter - CenterJSample // RANGE_SUBSET = 384
 	MaxJSample    = 255
 
 	// IDCT method constants (JDCT_*)
-	JDCTISlow = 0  // accurate integer
-	JDCTIFast = 1  // fast integer
-	JDCTFloat = 2  // floating-point
+	JDCTISlow = 0 // accurate integer
+	JDCTIFast = 1 // fast integer
+	JDCTFloat = 2 // floating-point
 )
 
 // JCOEF is the type for JPEG coefficient values.
@@ -96,9 +96,9 @@ type FloatMultTable [DCTSize2]float64
 // with (value & RANGE_MASK). The table converts from level-shifted values
 // to the final unsigned output:
 //
-//   Index   0..383   : value 0    (for signed values < -128, clamp to black)
-//   Index 384..639   : value 0..255 (identity for signed values -128..127)
-//   Index 640..1023  : value 255  (for signed values > 127, clamp to white)
+//	Index   0..383   : value 0    (for signed values < -128, clamp to black)
+//	Index 384..639   : value 0..255 (identity for signed values -128..127)
+//	Index 640..1023  : value 255  (for signed values > 127, clamp to white)
 //
 // Entries 1024..1279 are a copy of 0..255 for safety.
 type RangeLimitTable [5 * 256]JSAMPLE
@@ -166,16 +166,16 @@ type BitReadState struct {
 // SavableState holds entropy decoder state that changes within an MCU
 // but must not be updated permanently until MCU completion.
 type SavableState struct {
-	EOBRUN     uint  // remaining EOBs in EOBRUN
-	LastDCVal  [MaxCompsInScan]int // last DC coef for each component
+	EOBRUN    uint                // remaining EOBs in EOBRUN
+	LastDCVal [MaxCompsInScan]int // last DC coef for each component
 }
 
 // HuffmanTable represents a JPEG Huffman table (DHT marker data).
 // This is the "public" table (JHUFF_TBL in IJG).
 type HuffmanTable struct {
-	Bits   [17]uint8 // bits[1..16] = # of codes of each length; bits[0] unused
-	HuffVal [256]uint8 // symbol values in order of increasing code length
-	SentTable bool     // whether the table has been output (for encoding)
+	Bits      [17]uint8  // bits[1..16] = # of codes of each length; bits[0] unused
+	HuffVal   [256]uint8 // symbol values in order of increasing code length
+	SentTable bool       // whether the table has been output (for encoding)
 }
 
 // DerivedHuffTable contains the precomputed decoding data for a Huffman table.
@@ -196,8 +196,8 @@ type DerivedHuffTable struct {
 	// the input data stream. If the next Huffman code is no more
 	// than HuffLookahead bits long, we can obtain its length and
 	// the corresponding symbol directly from these tables.
-	LookNBits [1 << HuffLookahead]int    // # bits, or 0 if too long
-	LookSym   [1 << HuffLookahead]uint8  // symbol, or unused
+	LookNBits [1 << HuffLookahead]int   // # bits, or 0 if too long
+	LookSym   [1 << HuffLookahead]uint8 // symbol, or unused
 }
 
 // BitReadWorkingState holds working bit-reading state within an MCU.
@@ -208,17 +208,11 @@ type BitReadWorkingState struct {
 	BitsLeft      int    // # of unused bits in it
 }
 
-// Mask for n rightmost bits.
-var bmask = [16]int32{
-	0, 0x0001, 0x0003, 0x0007, 0x000F, 0x001F, 0x003F, 0x007F, 0x00FF,
-	0x01FF, 0x03FF, 0x07FF, 0x0FFF, 0x1FFF, 0x3FFF, 0x7FFF,
-}
-
 // HuffExtend extends a Huffman-decoded value to signed.
 // This implements Figure F.12 from the JPEG spec.
 func HuffExtend(x int, s int) int {
-	if x <= int(bmask[s-1]) {
-		return x - int(bmask[s])
+	if x < 1<<uint(s-1) {
+		return x + (-1 << uint(s)) + 1
 	}
 	return x
 }
@@ -231,11 +225,11 @@ type ArithDCContext struct {
 
 // ArithEntropyState holds the state for arithmetic decoding.
 type ArithEntropyState struct {
-	C           int32 // C register
-	A           int32 // A register
-	Ct          int   // bit shift counter
-	LastDCVal   [MaxCompsInScan]int
-	DCContext   [MaxCompsInScan]int
+	C            int32 // C register
+	A            int32 // A register
+	Ct           int   // bit shift counter
+	LastDCVal    [MaxCompsInScan]int
+	DCContext    [MaxCompsInScan]int
 	RestartsToGo uint
 
 	// Statistics areas
@@ -258,10 +252,10 @@ type IDCTFunc func(coefBlock []JCOEF, quantTable interface{}, outputBuf []BlockR
 // NaturalOrder maps zigzag index to natural (row-major) order.
 // This is the standard JPEG zigzag scan order for 8x8 blocks.
 var NaturalOrder = [80]int{
-	 0,  1,  8, 16,  9,  2,  3, 10,
-	17, 24, 32, 25, 18, 11,  4,  5,
+	0, 1, 8, 16, 9, 2, 3, 10,
+	17, 24, 32, 25, 18, 11, 4, 5,
 	12, 19, 26, 33, 40, 48, 41, 34,
-	27, 20, 13,  6,  7, 14, 21, 28,
+	27, 20, 13, 6, 7, 14, 21, 28,
 	35, 42, 49, 56, 57, 50, 43, 36,
 	29, 22, 15, 23, 30, 37, 44, 51,
 	58, 59, 52, 45, 38, 31, 39, 46,

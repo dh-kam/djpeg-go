@@ -426,10 +426,51 @@ func coreOutputDimensions(d *Decompressor) {
 		}
 	}
 
-	// Recompute dimensions of components
+	// Recompute per-component IDCT scaling. IJG 9f scales chroma up in
+	// the IDCT when fancy upsampling is enabled so the upsampler can often
+	// run at 1:1.
 	for ci := 0; ci < d.NumComponents; ci++ {
 		compptr := &d.CompInfo[ci]
-		compptr.DCHScaledSize = d.MinDCTHScaledSize
-		compptr.DCVScaledSize = d.MinDCTVScaledSize
+		hSize := 1
+		if !d.RawDataOut {
+			threshold := DCTSize / 2
+			if d.DoFancyUpsampling {
+				threshold = DCTSize
+			}
+			for d.MinDCTHScaledSize*hSize <= threshold &&
+				d.MaxHSampFactor%(compptr.HSampFactor*hSize*2) == 0 {
+				hSize *= 2
+			}
+		}
+		compptr.DCHScaledSize = d.MinDCTHScaledSize * hSize
+
+		vSize := 1
+		if !d.RawDataOut {
+			threshold := DCTSize / 2
+			if d.DoFancyUpsampling {
+				threshold = DCTSize
+			}
+			for d.MinDCTVScaledSize*vSize <= threshold &&
+				d.MaxVSampFactor%(compptr.VSampFactor*vSize*2) == 0 {
+				vSize *= 2
+			}
+		}
+		compptr.DCVScaledSize = d.MinDCTVScaledSize * vSize
+
+		if compptr.DCHScaledSize > compptr.DCVScaledSize*2 {
+			compptr.DCHScaledSize = compptr.DCVScaledSize * 2
+		} else if compptr.DCVScaledSize > compptr.DCHScaledSize*2 {
+			compptr.DCVScaledSize = compptr.DCHScaledSize * 2
+		}
+
+		compptr.MCUSampleWidth = compptr.MCUWidth * compptr.DCHScaledSize
+		compptr.DownsampledWidth = JDivRoundUp(
+			d.ImageWidth*compptr.HSampFactor*compptr.DCHScaledSize,
+			d.MaxHSampFactor*d.BlockSize,
+		)
+		compptr.DownsampledHeight = JDivRoundUp(
+			d.ImageHeight*compptr.VSampFactor*compptr.DCVScaledSize,
+			d.MaxVSampFactor*d.BlockSize,
+		)
 	}
 }

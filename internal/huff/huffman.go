@@ -6,10 +6,10 @@ import (
 
 // Errors returned by the Huffman decoder.
 var (
-	ErrBadHuffTable  = errors.New("jpeg: bad Huffman table")
-	ErrHitMarker     = errors.New("jpeg: hit marker in compressed data")
-	ErrHuffBadCode   = errors.New("jpeg: bad Huffman code")
-	ErrSuspension    = errors.New("jpeg: data source suspension")
+	ErrBadHuffTable = errors.New("jpeg: bad Huffman table")
+	ErrHitMarker    = errors.New("jpeg: hit marker in compressed data")
+	ErrHuffBadCode  = errors.New("jpeg: bad Huffman code")
+	ErrSuspension   = errors.New("jpeg: data source suspension")
 )
 
 // MakeDerivedHuffTable computes the derived values for a Huffman table.
@@ -125,23 +125,6 @@ func fillBitBuffer(state *BitReadWorkingState, nbits int, unreadMarker *byte) bo
 				state.NextInputByte = data
 				state.BytesInBuffer = bytesInBuffer
 				return false
-			}
-
-			// Fast path: read up to 4 bytes, checking for 0xFF markers.
-			// In the common case (no markers), this loads 4 bytes in one batch.
-			if bytesInBuffer >= 4 && bitsLeft <= minGetBits-32 {
-				// Check 4 bytes for 0xFF simultaneously
-				b0 := data[0]
-				b1 := data[1]
-				b2 := data[2]
-				b3 := data[3]
-				if b0 != 0xFF && b1 != 0xFF && b2 != 0xFF && b3 != 0xFF {
-					getBuffer = (getBuffer << 32) | (uint32(b0) << 24) | (uint32(b1) << 16) | (uint32(b2) << 8) | uint32(b3)
-					bitsLeft += 32
-					data = data[4:]
-					bytesInBuffer -= 4
-					continue
-				}
 			}
 
 			// Slow path: read byte-by-byte with marker detection

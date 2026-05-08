@@ -30,6 +30,8 @@ type markerReader struct {
 	buf    []byte
 	bufPos int
 	bufLen int
+
+	scratch [4]byte
 }
 
 // markerProcessor is the function signature for processing a marker.
@@ -43,45 +45,35 @@ func (mr *markerReader) readBytes(d *Decompressor, n int) ([]byte, error) {
 		return nil, nil
 	}
 	result := make([]byte, n)
-	totalRead := 0
-	for totalRead < n {
-		nn, err := d.Src.Read(result[totalRead:])
-		totalRead += nn
-		if err != nil {
-			if err == io.EOF && totalRead < n {
-				return nil, io.ErrUnexpectedEOF
-			}
-			return result[:totalRead], err
-		}
+	read, err := io.ReadFull(d.Src, result)
+	if err != nil {
+		return result[:read], err
 	}
 	return result, nil
 }
 
 // readByte reads one byte from the source.
 func (mr *markerReader) readByte(d *Decompressor) (byte, error) {
-	b, err := mr.readBytes(d, 1)
-	if err != nil {
-		return 0, err
-	}
-	return b[0], nil
+	_, err := io.ReadFull(d.Src, mr.scratch[:1])
+	return mr.scratch[0], err
 }
 
 // readUint16 reads a big-endian uint16 from the source.
 func (mr *markerReader) readUint16(d *Decompressor) (uint16, error) {
-	b, err := mr.readBytes(d, 2)
+	_, err := io.ReadFull(d.Src, mr.scratch[:2])
 	if err != nil {
 		return 0, err
 	}
-	return binary.BigEndian.Uint16(b), nil
+	return binary.BigEndian.Uint16(mr.scratch[:2]), nil
 }
 
 // readUint32 reads a big-endian uint32 from the source.
 func (mr *markerReader) readUint32(d *Decompressor) (uint32, error) {
-	b, err := mr.readBytes(d, 4)
+	_, err := io.ReadFull(d.Src, mr.scratch[:4])
 	if err != nil {
 		return 0, err
 	}
-	return binary.BigEndian.Uint32(b), nil
+	return binary.BigEndian.Uint32(mr.scratch[:4]), nil
 }
 
 // skipBytes skips n bytes from the source.

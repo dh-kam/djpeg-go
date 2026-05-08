@@ -8,10 +8,10 @@ import (
 	"github.com/dh-kam/djpeg-go/internal/decoder"
 )
 
-// loadJPEG loads a test JPEG file, skipping if not available.
+// loadJPEG loads a test JPEG fixture, skipping if not available.
 func loadJPEG(b *testing.B, name string) []byte {
 	b.Helper()
-	data, err := os.ReadFile(name)
+	data, err := os.ReadFile("testdata/" + name)
 	if err != nil {
 		b.Skip(name, "not available:", err)
 	}
