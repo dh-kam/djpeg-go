@@ -369,7 +369,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--images",
-        default="testdata/random100/*.jpg",
+        default="tests/testdata/random100/*.jpg",
         help="glob of JPEG inputs, relative to the repo root by default",
     )
     parser.add_argument(

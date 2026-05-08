@@ -3,13 +3,13 @@
 Generated: 2026-05-08 KST
 
 This report compares `djpeg-go` against the local IJG C reference and records
-the Go CPU/memory profile hotspots for the `testdata/random100` corpus.
+the Go CPU/memory profile hotspots for the `tests/testdata/random100` corpus.
 
 ## Scope
 
 | Item | Value |
 |---|---|
-| Corpus | `testdata/random100/*.jpg` |
+| Corpus | `tests/testdata/random100/*.jpg` |
 | Image count | 100 |
 | Input bytes | 20,023,823 |
 | Output pixels | 21,262,941 |
@@ -52,7 +52,7 @@ Each measurement decodes all 100 JPEGs to PPM and discards stdout.
 Command:
 
 ```bash
-go test ./cmd/djpeg \
+go test ./tests \
   -run '^$' \
   -bench '^BenchmarkDecompressRandom100(Default|NoSmooth)$' \
   -benchmem \
@@ -80,7 +80,7 @@ exact parity:
 Generated with:
 
 ```bash
-go test ./cmd/djpeg \
+go test ./tests \
   -run '^$' \
   -bench '^BenchmarkDecompressRandom100Default$' \
   -benchmem \
@@ -92,13 +92,13 @@ go test ./cmd/djpeg \
 
 | Artifact | sha256 |
 |---|---|
-| `docs/djpeg-go-cpu.pprof` | `979ea76ab456473fd740b5411c05b774f18cd9501cdc288dc1416dad94acd88d` |
-| `docs/djpeg-go-mem.pprof` | `881328509dba3981ea2c7bf7ba24052492758a7412233f35d7c3672eb6973ec8` |
+| `docs/djpeg-go-cpu.pprof` | `630dd9b7a7f6e45dd456f3c7b95600498a14a7f1ee655571c9cf51a0da13e1a4` |
+| `docs/djpeg-go-mem.pprof` | `44c6a08e0804d3df727afd29cb1f756f40ba67822db526e989435ee2230fdb37` |
 
 Profile benchmark result:
 
 ```text
-BenchmarkDecompressRandom100Default-20  5  494625874 ns/op  94765385 B/op  6280 allocs/op
+BenchmarkDecompressRandom100Default-20  5  471927100 ns/op  94765440 B/op  6281 allocs/op
 ```
 
 ## CPU Hotspots
@@ -145,7 +145,7 @@ Interpretation:
 - Removed scratch/debug files that broke or polluted builds: root `main` experiments, duplicate `cmd/djpeg/main.go_*`, debug decoder tests, stale generated PPM/binary/cache files.
 - Removed contaminated `jpeg-6b` benchmark reference and stale `docs/performance.ko.md`.
 - Replaced the old one-shot `scripts/benchmark.sh` with a reproducible wrapper around `scripts/perf_compare.py`.
-- Added random100 benchmarks in `cmd/djpeg/benchmark_test.go`.
+- Added random100 benchmarks in `tests/cmd_benchmark_test.go`.
 - Fixed skipped fixture paths in root and decoder memory benchmarks.
 - Removed dead `uint32 << 32` Huffman fast path that made `go vet ./...` fail.
 - Removed unused decoder fields and unused h2v2 helper.

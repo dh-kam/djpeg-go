@@ -10,9 +10,9 @@ import (
 func FuzzFullDecode(f *testing.F) {
 	// Seed with real JPEG files
 	seeds := []string{
-		"/workspace/djpeg-go/test_gray.jpg",
-		"/workspace/djpeg-go/test_color.jpg",
-		"/workspace/djpeg-go/test_420.jpg",
+		testFixture("test_gray.jpg"),
+		testFixture("test_color.jpg"),
+		testFixture("test_420.jpg"),
 	}
 	for _, path := range seeds {
 		data, err := os.ReadFile(path)
@@ -22,12 +22,12 @@ func FuzzFullDecode(f *testing.F) {
 	}
 
 	// Also add minimal/invalid seeds
-	f.Add([]byte{0xFF, 0xD8, 0xFF, 0xD9})                    // SOI + EOI
-	f.Add([]byte{0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x02})         // truncated SOF0
-	f.Add([]byte{})                                             // empty
-	f.Add([]byte{0x89, 0x50, 0x4E, 0x47})                     // PNG header
-	f.Add([]byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x02})         // truncated APP0
-	f.Add([]byte{0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02})         // truncated SOS
+	f.Add([]byte{0xFF, 0xD8, 0xFF, 0xD9})             // SOI + EOI
+	f.Add([]byte{0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x02}) // truncated SOF0
+	f.Add([]byte{})                                   // empty
+	f.Add([]byte{0x89, 0x50, 0x4E, 0x47})             // PNG header
+	f.Add([]byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x02}) // truncated APP0
+	f.Add([]byte{0xFF, 0xD8, 0xFF, 0xDA, 0x00, 0x02}) // truncated SOS
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		dec := New(bytes.NewReader(data))
@@ -54,7 +54,7 @@ func FuzzFullDecode(f *testing.F) {
 
 // FuzzDecodeToRGB tests the convenience DecodeToRGB function.
 func FuzzDecodeToRGB(f *testing.F) {
-	data, err := os.ReadFile("/workspace/djpeg-go/test_gray.jpg")
+	data, err := os.ReadFile(testFixture("test_gray.jpg"))
 	if err == nil {
 		f.Add(data)
 	}
@@ -69,7 +69,7 @@ func FuzzDecodeToRGB(f *testing.F) {
 
 // TestDecodeToRGBColorFile tests DecodeToRGB with a color JPEG.
 func TestDecodeToRGBColorFile(t *testing.T) {
-	f, err := os.Open("/workspace/djpeg-go/test_color.jpg")
+	f, err := os.Open(testFixture("test_color.jpg"))
 	if err != nil {
 		t.Skip("test_color.jpg not available:", err)
 	}
@@ -90,7 +90,7 @@ func TestDecodeToRGBColorFile(t *testing.T) {
 
 // TestDecodeToRGB420File tests DecodeToRGB with a 4:2:0 JPEG.
 func TestDecodeToRGB420File(t *testing.T) {
-	f, err := os.Open("/workspace/djpeg-go/test_420.jpg")
+	f, err := os.Open(testFixture("test_420.jpg"))
 	if err != nil {
 		t.Skip("test_420.jpg not available:", err)
 	}
@@ -108,7 +108,7 @@ func TestDecodeToRGB420File(t *testing.T) {
 
 // TestDecoderOutColorSpace tests the OutColorSpace method.
 func TestDecoderOutColorSpace(t *testing.T) {
-	f, err := os.Open("/workspace/djpeg-go/test_gray.jpg")
+	f, err := os.Open(testFixture("test_gray.jpg"))
 	if err != nil {
 		t.Skip("test_gray.jpg not available:", err)
 	}
@@ -241,7 +241,7 @@ func TestDecodeWithIDCTMethods(t *testing.T) {
 
 	for _, method := range methods {
 		t.Run(method, func(t *testing.T) {
-			f, err := os.Open("/workspace/djpeg-go/test_gray.jpg")
+			f, err := os.Open(testFixture("test_gray.jpg"))
 			if err != nil {
 				t.Skip("test_gray.jpg not available:", err)
 			}
@@ -287,7 +287,7 @@ func TestDecodeColorWithIDCTMethods(t *testing.T) {
 
 	for _, method := range methods {
 		t.Run(method, func(t *testing.T) {
-			f, err := os.Open("/workspace/djpeg-go/test_color.jpg")
+			f, err := os.Open(testFixture("test_color.jpg"))
 			if err != nil {
 				t.Skip("test_color.jpg not available:", err)
 			}
@@ -333,7 +333,7 @@ func TestDecode420WithIDCTMethods(t *testing.T) {
 
 	for _, method := range methods {
 		t.Run(method, func(t *testing.T) {
-			f, err := os.Open("/workspace/djpeg-go/test_420.jpg")
+			f, err := os.Open(testFixture("test_420.jpg"))
 			if err != nil {
 				t.Skip("test_420.jpg not available:", err)
 			}

@@ -15,7 +15,7 @@ Pure Go로 포팅한 프로젝트입니다. 현재 기준 upstream은 2024년 1�
 - CLI 출력 중 PPM/PGM 경로가 가장 많이 검증되어 있습니다.
 - BMP, Targa, RLE, 제한적인 GIF writer 코드가 있지만 exact parity 측정은
   현재 PPM/PGM 출력 기준입니다.
-- `testdata/random100` 코퍼스 기준 IJG 9f `djpeg -dct int`와 default smooth,
+- `tests/testdata/random100` 코퍼스 기준 IJG 9f `djpeg -dct int`와 default smooth,
   `--nosmooth` 양쪽 모두 Exact-100 parity를 달성했습니다.
 
 최신 측정 결과는 [docs/exact-100-result.md](docs/exact-100-result.md)와
@@ -41,7 +41,7 @@ decode, IDCT 동작, color conversion, 일부 `djpeg` 출력 동작을 기준으
 ## 빌드
 
 ```bash
-go build -o ./bin/djpeg-go ./cmd/djpeg
+make build
 ```
 
 `GOBIN`에 CLI를 설치하려면:
@@ -50,35 +50,108 @@ go build -o ./bin/djpeg-go ./cmd/djpeg
 go install ./cmd/djpeg
 ```
 
+단일 release 타깃 빌드:
+
+```bash
+make linux-amd64-release VERSION=v0.1.0-202605.1-9f
+```
+
+전체 release 타깃 빌드:
+
+```bash
+make release VERSION=v0.1.0-202605.1-9f
+```
+
+릴리스 태그는 `vSEMVER-YYYYMM.seq-upstreamversion` 형식을 사용합니다.
+예시는 `v0.1.0-202605.1-9f`입니다. 현재 월 기준 다음 태그를 출력하려면:
+
+```bash
+make bump-up SEMVER=0.1.0 UPSTREAM_VERSION=9f
+```
+
 ## 빠른 사용법
+
+Go 라이브러리로 사용:
+
+```go
+package main
+
+import (
+	"image/png"
+	"os"
+
+	djpeg "github.com/dh-kam/djpeg-go"
+)
+
+func main() {
+	in, err := os.Open("input.jpg")
+	if err != nil {
+		panic(err)
+	}
+	defer in.Close()
+
+	img, err := djpeg.Decode(in)
+	if err != nil {
+		panic(err)
+	}
+
+	out, err := os.Create("output.png")
+	if err != nil {
+		panic(err)
+	}
+	defer out.Close()
+
+	if err := png.Encode(out, img); err != nil {
+		panic(err)
+	}
+}
+```
+
+정확한 byte layout이 필요하면 raw pixel raster를 사용할 수 있습니다.
+
+```go
+raster, err := djpeg.DecodeRaster(input, djpeg.WithIDCT(djpeg.IDCTInt))
+if err != nil {
+	return err
+}
+// raster.Pix는 top-down Gray8 또는 RGB24 데이터이며 row당 raster.Stride byte입니다.
+```
 
 JPEG를 raw binary PPM/PGM으로 디코딩:
 
 ```bash
-./bin/djpeg-go --ppm input.jpg > output.ppm
+./dist/djpeg-linux-amd64-debug --ppm input.jpg > output.ppm
 ```
 
 fancy upsampling 비활성화:
 
 ```bash
-./bin/djpeg-go --dct int --nosmooth --ppm input.jpg > output.ppm
+./dist/djpeg-linux-amd64-debug --dct int --nosmooth --ppm input.jpg > output.ppm
+```
+
+PDF 4:2:0 DCT stream에서 Poppler/ImageMagick 방식 출력과 맞추기:
+
+```bash
+./dist/djpeg-linux-amd64-debug --turbo-fancy --ppm input.jpg > output.ppm
 ```
 
 파일로 출력:
 
 ```bash
-./bin/djpeg-go --ppm --outfile output.ppm input.jpg
+./dist/djpeg-linux-amd64-debug --ppm --outfile output.ppm input.jpg
 ```
 
-더 많은 예시는 [docs/examples.ko.md](docs/examples.ko.md)에 있습니다.
+더 많은 예시는 [docs/examples.ko.md](docs/examples.ko.md)에 있습니다. 공개 Go
+라이브러리 facade는 [docs/library-api.ko.md](docs/library-api.ko.md)에 자세히
+정리되어 있습니다.
 
 ## 검증
 
 Go 테스트 실행:
 
 ```bash
-go test ./...
-go vet ./...
+make test
+make vet
 ```
 
 IJG 9f C 기준 구현과 exact parity 확인:
@@ -104,15 +177,25 @@ scripts/perf_compare.py \
 
 ## 저장소 구조
 
+- package root (`github.com/dh-kam/djpeg-go`): 공개 Go 라이브러리 API
 - `cmd/djpeg`: `djpeg` 워크플로와 맞춘 CLI
+- `internal/djpegcli`: CLI용 Cobra/Viper command orchestration
 - `internal/decoder`: 상위 JPEG 디코딩 파이프라인
 - `internal/marker`: marker parsing과 decompressor metadata
 - `internal/huff`: Huffman entropy decode와 IDCT 구현
 - `internal/color`: IJG 기반 color conversion 및 upsampling 보조 코드
 - `internal/output`: PPM/PGM, BMP, GIF, Targa, RLE writer
+- `tests`: 통합, CLI, parity, benchmark 테스트와 공용 fixture
 - `scripts`: parity 및 성능 측정 하네스
 - `docs`: 정확도, 성능, 사용 문서
 - `jpeg-9f`: upstream IJG 기준 소스와 로컬 C reference build
+
+## CI와 Release
+
+GitHub Actions는 push와 pull request마다 `make vet`, `make test`, command
+build를 실행합니다. 수동 Release workflow는 다음 bump-up 태그를 계산하고,
+Linux/macOS/Windows amd64/arm64 정적 release 바이너리를 빌드한 뒤 git tag를
+생성하고 GitHub Release에 바이너리를 업로드합니다.
 
 ## 라이선스
 

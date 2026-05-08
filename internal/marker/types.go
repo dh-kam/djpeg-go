@@ -210,22 +210,23 @@ type Decompressor struct {
 	JPEGColorSpace ColorSpace
 
 	// Decompression parameters (set before StartDecompress)
-	OutColorSpace       ColorSpace
-	ScaleNum            uint
-	ScaleDenom          uint
-	OutputGamma         float64
-	BufferedImage       bool
-	RawDataOut          bool
-	DCTMethod           DCTMethod
-	DoFancyUpsampling   bool
-	DoBlockSmoothing    bool
-	QuantizeColors      bool
-	DitherMode          DitherMode
-	TwoPassQuantize     bool
-	DesiredNumColors    int
-	Enable1PassQuant    bool
-	EnableExternalQuant bool
-	Enable2PassQuant    bool
+	OutColorSpace            ColorSpace
+	ScaleNum                 uint
+	ScaleDenom               uint
+	OutputGamma              float64
+	BufferedImage            bool
+	RawDataOut               bool
+	DCTMethod                DCTMethod
+	DoFancyUpsampling        bool
+	DisableChromaIDCTScaling bool
+	DoBlockSmoothing         bool
+	QuantizeColors           bool
+	DitherMode               DitherMode
+	TwoPassQuantize          bool
+	DesiredNumColors         int
+	Enable1PassQuant         bool
+	EnableExternalQuant      bool
+	Enable2PassQuant         bool
 
 	// Computed output description
 	OutputWidth        int

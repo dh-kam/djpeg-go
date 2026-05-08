@@ -83,5 +83,5 @@ func TestGenerateGoldenFiles(t *testing.T) {
 	if os.Getenv("UPDATE_GOLDEN") != "1" {
 		t.Skip("Set UPDATE_GOLDEN=1 to regenerate golden test files")
 	}
-	GenerateGoldenFiles(t, "../../testdata")
+	GenerateGoldenFiles(t, "../../tests/testdata")
 }

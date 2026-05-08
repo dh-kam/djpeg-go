@@ -1,18 +1,77 @@
 # Examples
 
-This document shows common `djpeg-go` CLI workflows. The examples assume that
-you built the binary as `./bin/djpeg-go`.
+This document shows common `djpeg-go` CLI workflows. The examples assume a
+Linux amd64 debug build at `./dist/djpeg-linux-amd64-debug`.
 
 ```bash
-go build -o ./bin/djpeg-go ./cmd/djpeg
+make build
 ```
+
+## Go Library API
+
+Import the root module when another Go module needs to decode JPEG data:
+
+```go
+import djpeg "github.com/dh-kam/djpeg-go"
+```
+
+Decode to an `image.Image` for use with the Go image ecosystem:
+
+```go
+in, err := os.Open("input.jpg")
+if err != nil {
+	return err
+}
+defer in.Close()
+
+img, err := djpeg.Decode(in)
+if err != nil {
+	return err
+}
+
+return png.Encode(out, img)
+```
+
+Decode to raw pixels when you need stable Gray8 or RGB24 byte layout:
+
+```go
+raster, err := djpeg.DecodeRaster(
+	in,
+	djpeg.WithIDCT(djpeg.IDCTInt),
+)
+if err != nil {
+	return err
+}
+
+switch raster.Format {
+case djpeg.PixelFormatGray8:
+	useGray(raster.Pix, raster.Rect.Dx(), raster.Rect.Dy(), raster.Stride)
+case djpeg.PixelFormatRGB24:
+	useRGB(raster.Pix, raster.Rect.Dx(), raster.Rect.Dy(), raster.Stride)
+}
+```
+
+Use the Poppler/ImageMagick-compatible chroma path from Go:
+
+```go
+raster, err := djpeg.DecodeRaster(
+	in,
+	djpeg.WithIDCT(djpeg.IDCTInt),
+	djpeg.WithTurboFancy(),
+)
+```
+
+The public API intentionally does not expose `internal/*` packages. Those
+packages remain implementation details for the port.
+
+For a detailed library guide, see [library-api.md](library-api.md).
 
 ## Basic Decoding
 
 Decode a JPEG to binary PPM or PGM:
 
 ```bash
-./bin/djpeg-go --ppm input.jpg > output.ppm
+./dist/djpeg-linux-amd64-debug --ppm input.jpg > output.ppm
 ```
 
 The output is PPM (`P6`) for RGB images and PGM (`P5`) for grayscale images.
@@ -20,13 +79,13 @@ The output is PPM (`P6`) for RGB images and PGM (`P5`) for grayscale images.
 Write the decoded image to a named file:
 
 ```bash
-./bin/djpeg-go --ppm --outfile output.ppm input.jpg
+./dist/djpeg-linux-amd64-debug --ppm --outfile output.ppm input.jpg
 ```
 
 Read JPEG data from stdin:
 
 ```bash
-cat input.jpg | ./bin/djpeg-go --ppm > output.ppm
+cat input.jpg | ./dist/djpeg-linux-amd64-debug --ppm > output.ppm
 ```
 
 ## IDCT Selection
@@ -35,19 +94,19 @@ Use the integer IDCT path. This is the path used for exact parity testing
 against IJG 9f:
 
 ```bash
-./bin/djpeg-go --dct int --ppm input.jpg > output.ppm
+./dist/djpeg-linux-amd64-debug --dct int --ppm input.jpg > output.ppm
 ```
 
 Use the faster integer IDCT variant:
 
 ```bash
-./bin/djpeg-go --dct fast --ppm input.jpg > output.ppm
+./dist/djpeg-linux-amd64-debug --dct fast --ppm input.jpg > output.ppm
 ```
 
 Use the floating-point IDCT variant:
 
 ```bash
-./bin/djpeg-go --dct float --ppm input.jpg > output.ppm
+./dist/djpeg-linux-amd64-debug --dct float --ppm input.jpg > output.ppm
 ```
 
 Only `--dct int` is currently part of the exact-100 parity gate.
@@ -57,43 +116,53 @@ Only `--dct int` is currently part of the exact-100 parity gate.
 Default mode uses IJG-compatible fancy upsampling where applicable:
 
 ```bash
-./bin/djpeg-go --dct int --ppm input.jpg > smooth.ppm
+./dist/djpeg-linux-amd64-debug --dct int --ppm input.jpg > smooth.ppm
 ```
 
 Disable fancy upsampling:
 
 ```bash
-./bin/djpeg-go --dct int --nosmooth --ppm input.jpg > nosmooth.ppm
+./dist/djpeg-linux-amd64-debug --dct int --nosmooth --ppm input.jpg > nosmooth.ppm
 ```
 
 Both default and `--nosmooth` modes are included in the current exact-100
 random100 parity run.
+
+## Poppler/ImageMagick-Compatible 4:2:0 Output
+
+Some PDF image streams match Poppler/ImageMagick output when libjpeg-turbo-style
+8x8 chroma IDCT plus fancy upsampling is used instead of IJG 9f chroma IDCT
+scaling:
+
+```bash
+./dist/djpeg-linux-amd64-debug --turbo-fancy --ppm input.jpg > output.ppm
+```
 
 ## Other Output Formats
 
 Write BMP:
 
 ```bash
-./bin/djpeg-go --bmp --outfile output.bmp input.jpg
+./dist/djpeg-linux-amd64-debug --bmp --outfile output.bmp input.jpg
 ```
 
 Write Targa:
 
 ```bash
-./bin/djpeg-go --targa --outfile output.tga input.jpg
+./dist/djpeg-linux-amd64-debug --targa --outfile output.tga input.jpg
 ```
 
 Write Utah RLE:
 
 ```bash
-./bin/djpeg-go --rle --outfile output.rle input.jpg
+./dist/djpeg-linux-amd64-debug --rle --outfile output.rle input.jpg
 ```
 
 GIF output is limited. Grayscale images can be written with a generated
 grayscale palette:
 
 ```bash
-./bin/djpeg-go --gif --outfile gray.gif grayscale-input.jpg
+./dist/djpeg-linux-amd64-debug --gif --outfile gray.gif grayscale-input.jpg
 ```
 
 Color GIF requires indexed-color data. The current CLI does not provide a
@@ -105,7 +174,7 @@ for RGB input.
 Print input and output metadata to stderr:
 
 ```bash
-./bin/djpeg-go --verbose --ppm input.jpg > output.ppm
+./dist/djpeg-linux-amd64-debug --verbose --ppm input.jpg > output.ppm
 ```
 
 ## CPU Profiling
@@ -113,14 +182,14 @@ Print input and output metadata to stderr:
 The CLI supports an internal CPU profile flag:
 
 ```bash
-./bin/djpeg-go --cpuprofile cpu.pprof --ppm input.jpg > output.ppm
+./dist/djpeg-linux-amd64-debug --cpuprofile cpu.pprof --ppm input.jpg > output.ppm
 go tool pprof -top cpu.pprof
 ```
 
 For benchmark profiles, prefer the Go benchmark harness:
 
 ```bash
-go test ./cmd/djpeg \
+go test ./tests \
   -run '^$' \
   -bench '^BenchmarkDecompressRandom100Default$' \
   -benchmem \

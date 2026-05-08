@@ -16,7 +16,7 @@ performance testing.
 - BMP, Targa, RLE, and limited GIF writer code exists, but exact parity is
   currently measured against PPM/PGM output.
 - Exact-100 parity against IJG 9f `djpeg -dct int` is currently achieved for
-  the `testdata/random100` corpus in both default smooth and `--nosmooth`
+  the `tests/testdata/random100` corpus in both default smooth and `--nosmooth`
   modes.
 
 See [docs/exact-100-result.md](docs/exact-100-result.md) and
@@ -42,7 +42,7 @@ This project is not affiliated with the Independent JPEG Group.
 ## Build
 
 ```bash
-go build -o ./bin/djpeg-go ./cmd/djpeg
+make build
 ```
 
 To install the CLI into your `GOBIN`:
@@ -51,35 +51,107 @@ To install the CLI into your `GOBIN`:
 go install ./cmd/djpeg
 ```
 
+Build one release target:
+
+```bash
+make linux-amd64-release VERSION=v0.1.0-202605.1-9f
+```
+
+Build all release targets:
+
+```bash
+make release VERSION=v0.1.0-202605.1-9f
+```
+
+Release tags use `vSEMVER-YYYYMM.seq-upstreamversion`, for example
+`v0.1.0-202605.1-9f`. To print the next tag for the current month:
+
+```bash
+make bump-up SEMVER=0.1.0 UPSTREAM_VERSION=9f
+```
+
 ## Quick Use
+
+Use the decoder as a Go library:
+
+```go
+package main
+
+import (
+	"image/png"
+	"os"
+
+	djpeg "github.com/dh-kam/djpeg-go"
+)
+
+func main() {
+	in, err := os.Open("input.jpg")
+	if err != nil {
+		panic(err)
+	}
+	defer in.Close()
+
+	img, err := djpeg.Decode(in)
+	if err != nil {
+		panic(err)
+	}
+
+	out, err := os.Create("output.png")
+	if err != nil {
+		panic(err)
+	}
+	defer out.Close()
+
+	if err := png.Encode(out, img); err != nil {
+		panic(err)
+	}
+}
+```
+
+Use raw pixels when exact byte layout matters:
+
+```go
+raster, err := djpeg.DecodeRaster(input, djpeg.WithIDCT(djpeg.IDCTInt))
+if err != nil {
+	return err
+}
+// raster.Pix is top-down Gray8 or RGB24 data with raster.Stride bytes per row.
+```
 
 Decode a JPEG to raw binary PPM/PGM:
 
 ```bash
-./bin/djpeg-go --ppm input.jpg > output.ppm
+./dist/djpeg-linux-amd64-debug --ppm input.jpg > output.ppm
 ```
 
 Disable fancy upsampling:
 
 ```bash
-./bin/djpeg-go --dct int --nosmooth --ppm input.jpg > output.ppm
+./dist/djpeg-linux-amd64-debug --dct int --nosmooth --ppm input.jpg > output.ppm
+```
+
+Match Poppler/ImageMagick-style output for PDF 4:2:0 DCT streams:
+
+```bash
+./dist/djpeg-linux-amd64-debug --turbo-fancy --ppm input.jpg > output.ppm
 ```
 
 Write to a file:
 
 ```bash
-./bin/djpeg-go --ppm --outfile output.ppm input.jpg
+./dist/djpeg-linux-amd64-debug --ppm --outfile output.ppm input.jpg
 ```
 
-More examples are in [docs/examples.md](docs/examples.md).
+More examples are in [docs/examples.md](docs/examples.md). The public Go
+library facade is documented in [docs/library-api.md](docs/library-api.md).
 
 ## Verification
 
 Run the Go test suite:
 
 ```bash
-go test ./...
-go vet ./...
+make test
+make vet
 ```
 
 Run exact parity against the IJG 9f C reference:
@@ -105,15 +177,25 @@ scripts/perf_compare.py \
 
 ## Repository Layout
 
+- package root (`github.com/dh-kam/djpeg-go`): public Go library API
 - `cmd/djpeg`: command-line interface compatible with the `djpeg` workflow
+- `internal/djpegcli`: Cobra/Viper command orchestration for the CLI
 - `internal/decoder`: high-level JPEG decompression pipeline
 - `internal/marker`: marker parsing and decompressor metadata
 - `internal/huff`: Huffman entropy decode and IDCT implementations
 - `internal/color`: IJG-inspired color conversion and upsampling support code
 - `internal/output`: PPM/PGM, BMP, GIF, Targa, and RLE output writers
+- `tests`: integration, CLI, parity, benchmark tests and shared fixtures
 - `scripts`: parity and performance harnesses
 - `docs`: accuracy, performance, and usage documentation
 - `jpeg-9f`: upstream IJG reference source and local C reference build
+
+## CI and Release
+
+GitHub Actions runs `make vet`, `make test`, and command builds on each push
+and pull request. The manual Release workflow computes the next bump-up tag,
+builds static release binaries for Linux, macOS, and Windows on amd64/arm64,
+creates the git tag, and uploads the binaries to the GitHub release.
 
 ## License
 

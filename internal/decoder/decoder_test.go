@@ -4,10 +4,15 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/dh-kam/djpeg-go/internal/testutil"
 )
+
+func testFixture(name string) string {
+	return filepath.Join("..", "..", "tests", "testdata", name)
+}
 
 func TestNewDecoder(t *testing.T) {
 	t.Parallel()
@@ -78,7 +83,7 @@ func loadGoldenReference(t *testing.T, jsonPath string) (pixels []byte, w, h, nc
 func TestDecodeGrayscaleGoldenFile(t *testing.T) {
 	t.Parallel()
 
-	pixels, w, h, components := decodeGoldenFile(t, "/workspace/djpeg-go/testdata/gray_8x8.jpg")
+	pixels, w, h, components := decodeGoldenFile(t, testFixture("gray_8x8.jpg"))
 
 	if w != 8 || h != 8 {
 		t.Errorf("dimensions = %dx%d, want 8x8", w, h)
@@ -93,7 +98,7 @@ func TestDecodeGrayscaleGoldenFile(t *testing.T) {
 	}
 
 	// Compare with golden reference
-	refPixels, refW, refH, refNc := loadGoldenReference(t, "/workspace/djpeg-go/testdata/gray_8x8.json")
+	refPixels, refW, refH, refNc := loadGoldenReference(t, testFixture("gray_8x8.json"))
 	cmp := testutil.NewPixelComparator(refPixels, pixels, refW, refH, refNc)
 
 	report := testutil.GenerateAccuracyReport(cmp, "gray_8x8", refW, refH, refNc)
@@ -107,7 +112,7 @@ func TestDecodeGrayscaleGoldenFile(t *testing.T) {
 func TestDecodeColor444GoldenFile(t *testing.T) {
 	t.Parallel()
 
-	pixels, w, h, components := decodeGoldenFile(t, "/workspace/djpeg-go/testdata/color_8x8_444.jpg")
+	pixels, w, h, components := decodeGoldenFile(t, testFixture("color_8x8_444.jpg"))
 
 	if w != 8 || h != 8 {
 		t.Errorf("dimensions = %dx%d, want 8x8", w, h)
@@ -116,7 +121,7 @@ func TestDecodeColor444GoldenFile(t *testing.T) {
 		t.Errorf("components = %d, want 3 (RGB)", components)
 	}
 
-	refPixels, refW, refH, refNc := loadGoldenReference(t, "/workspace/djpeg-go/testdata/color_8x8_444.json")
+	refPixels, refW, refH, refNc := loadGoldenReference(t, testFixture("color_8x8_444.json"))
 	cmp := testutil.NewPixelComparator(refPixels, pixels, refW, refH, refNc)
 
 	report := testutil.GenerateAccuracyReport(cmp, "color_8x8_444", refW, refH, refNc)
@@ -128,7 +133,7 @@ func TestDecodeColor444GoldenFile(t *testing.T) {
 }
 
 func TestDecodeColor420GoldenFile(t *testing.T) {
-	pixels, w, h, components := decodeGoldenFile(t, "/workspace/djpeg-go/testdata/color_16x16_420.jpg")
+	pixels, w, h, components := decodeGoldenFile(t, testFixture("color_16x16_420.jpg"))
 
 	if w != 16 || h != 16 {
 		t.Errorf("dimensions = %dx%d, want 16x16", w, h)
@@ -137,7 +142,7 @@ func TestDecodeColor420GoldenFile(t *testing.T) {
 		t.Errorf("components = %d, want 3 (RGB)", components)
 	}
 
-	refPixels, refW, refH, refNc := loadGoldenReference(t, "/workspace/djpeg-go/testdata/color_16x16_420.json")
+	refPixels, refW, refH, refNc := loadGoldenReference(t, testFixture("color_16x16_420.json"))
 	cmp := testutil.NewPixelComparator(refPixels, pixels, refW, refH, refNc)
 
 	report := testutil.GenerateAccuracyReport(cmp, "color_16x16_420", refW, refH, refNc)
@@ -149,7 +154,7 @@ func TestDecodeColor420GoldenFile(t *testing.T) {
 }
 
 func TestDecodeGrayscaleFile(t *testing.T) {
-	f, err := os.Open("/workspace/djpeg-go/test_gray.jpg")
+	f, err := os.Open(testFixture("test_gray.jpg"))
 	if err != nil {
 		t.Skip("test_gray.jpg not available:", err)
 	}
@@ -214,7 +219,7 @@ func TestDecodeGrayscaleFile(t *testing.T) {
 }
 
 func TestDecodeColorFile(t *testing.T) {
-	f, err := os.Open("/workspace/djpeg-go/test_color.jpg")
+	f, err := os.Open(testFixture("test_color.jpg"))
 	if err != nil {
 		t.Skip("test_color.jpg not available:", err)
 	}
@@ -263,7 +268,7 @@ func TestDecodeColorFile(t *testing.T) {
 }
 
 func TestDecode420File(t *testing.T) {
-	f, err := os.Open("/workspace/djpeg-go/test_420.jpg")
+	f, err := os.Open(testFixture("test_420.jpg"))
 	if err != nil {
 		t.Skip("test_420.jpg not available:", err)
 	}
@@ -300,7 +305,7 @@ func TestDecode420File(t *testing.T) {
 }
 
 func TestDecodeToRGBFunction(t *testing.T) {
-	f, err := os.Open("/workspace/djpeg-go/test_gray.jpg")
+	f, err := os.Open(testFixture("test_gray.jpg"))
 	if err != nil {
 		t.Skip("test_gray.jpg not available:", err)
 	}
@@ -325,7 +330,7 @@ func TestDecodeToRGBFromBytes(t *testing.T) {
 	t.Parallel()
 
 	// Read the test file into memory and decode from bytes
-	data, err := os.ReadFile("/workspace/djpeg-go/test_gray.jpg")
+	data, err := os.ReadFile(testFixture("test_gray.jpg"))
 	if err != nil {
 		t.Skip("test_gray.jpg not available:", err)
 	}

@@ -7,9 +7,9 @@ import (
 	"testing"
 )
 
-// loadTestJPEG loads a test JPEG fixture from testdata.
+// loadTestJPEG loads a test JPEG fixture from tests/testdata.
 func loadTestJPEG(name string) []byte {
-	data, err := os.ReadFile("../../testdata/" + name)
+	data, err := os.ReadFile("../../tests/testdata/" + name)
 	if err != nil {
 		return nil
 	}

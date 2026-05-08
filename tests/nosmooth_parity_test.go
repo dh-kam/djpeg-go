@@ -1,4 +1,4 @@
-package main
+package djpeggo_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/dh-kam/djpeg-go/internal/djpegcli"
 	"github.com/dh-kam/djpeg-go/internal/output"
 )
 
@@ -64,19 +65,19 @@ func testRepoRoot(t *testing.T) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	return filepath.Clean(filepath.Join(filepath.Dir(file), ".."))
 }
 
 func findRandom100JPEG(t *testing.T, root string, want subsampling) string {
 	t.Helper()
 
-	pattern := filepath.Join(root, "testdata", "random100", "*.jpg")
+	pattern := filepath.Join(root, "tests", "testdata", "random100", "*.jpg")
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		t.Fatalf("invalid random100 glob %q: %v", pattern, err)
 	}
 	if len(matches) == 0 {
-		t.Skipf("random100 testdata missing: no files matched %s", pattern)
+		t.Skipf("tests/testdata/random100 missing: no files matched %s", pattern)
 	}
 	sort.Strings(matches)
 
@@ -103,12 +104,12 @@ func decodeWithGoDjpeg(t *testing.T, jpegPath string, noSmooth bool) []byte {
 	}
 
 	var out bytes.Buffer
-	opts := &config{
+	opts := &djpegcli.Options{
 		Format:    output.FormatPPM,
 		NoSmooth:  noSmooth,
 		DctMethod: "int",
 	}
-	if err := decompress(bytes.NewReader(data), &out, opts); err != nil {
+	if err := djpegcli.Decompress(bytes.NewReader(data), &out, opts); err != nil {
 		t.Fatalf("Go djpeg decode failed for %s: %v", jpegPath, err)
 	}
 	if _, _, _, _, err := parsePNM(out.Bytes()); err != nil {

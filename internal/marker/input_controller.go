@@ -434,7 +434,7 @@ func coreOutputDimensions(d *Decompressor) {
 		hSize := 1
 		if !d.RawDataOut {
 			threshold := DCTSize / 2
-			if d.DoFancyUpsampling {
+			if d.DoFancyUpsampling && !d.DisableChromaIDCTScaling {
 				threshold = DCTSize
 			}
 			for d.MinDCTHScaledSize*hSize <= threshold &&
@@ -447,7 +447,7 @@ func coreOutputDimensions(d *Decompressor) {
 		vSize := 1
 		if !d.RawDataOut {
 			threshold := DCTSize / 2
-			if d.DoFancyUpsampling {
+			if d.DoFancyUpsampling && !d.DisableChromaIDCTScaling {
 				threshold = DCTSize
 			}
 			for d.MinDCTVScaledSize*vSize <= threshold &&

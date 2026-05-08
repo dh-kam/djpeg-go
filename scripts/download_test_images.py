@@ -1,7 +1,7 @@
 import urllib.request
 import os
 
-out_dir = "testdata/random100"
+out_dir = "tests/testdata/random100"
 os.makedirs(out_dir, exist_ok=True)
 
 print(f"Downloading 100 images to {out_dir}...")

@@ -20,7 +20,7 @@ func decodeWithGoStdLib(t *testing.T, data []byte) (image.Image, error) {
 func TestIntegrationDecodeGrayscale(t *testing.T) {
 	t.Parallel()
 
-	data, err := os.ReadFile("test_gray.jpg")
+	data, err := os.ReadFile("testdata/test_gray.jpg")
 	if err != nil {
 		t.Skip("test_gray.jpg not available:", err)
 	}
@@ -52,7 +52,7 @@ func TestIntegrationDecodeGrayscale(t *testing.T) {
 func TestIntegrationDecodeColor(t *testing.T) {
 	t.Parallel()
 
-	data, err := os.ReadFile("test_color.jpg")
+	data, err := os.ReadFile("testdata/test_color.jpg")
 	if err != nil {
 		t.Skip("test_color.jpg not available:", err)
 	}
@@ -77,7 +77,7 @@ func TestIntegrationDecodeColor(t *testing.T) {
 func TestIntegrationDecode420(t *testing.T) {
 	t.Parallel()
 
-	data, err := os.ReadFile("test_420.jpg")
+	data, err := os.ReadFile("testdata/test_420.jpg")
 	if err != nil {
 		t.Skip("test_420.jpg not available:", err)
 	}
@@ -102,7 +102,7 @@ func TestIntegrationDecode420(t *testing.T) {
 func TestIntegrationDecodeFromBytes(t *testing.T) {
 	t.Parallel()
 
-	data, err := os.ReadFile("test_color.jpg")
+	data, err := os.ReadFile("testdata/test_color.jpg")
 	if err != nil {
 		t.Skip("test_color.jpg not available:", err)
 	}
@@ -155,7 +155,7 @@ func TestIntegrationDecodeFromBytes(t *testing.T) {
 func TestIntegrationDecodeToRGB(t *testing.T) {
 	t.Parallel()
 
-	data, err := os.ReadFile("test_gray.jpg")
+	data, err := os.ReadFile("testdata/test_gray.jpg")
 	if err != nil {
 		t.Skip("test_gray.jpg not available:", err)
 	}
@@ -197,7 +197,7 @@ func TestIntegrationTruncatedJPEG(t *testing.T) {
 }
 
 func TestIntegrationOutputPPM(t *testing.T) {
-	data, err := os.ReadFile("test_gray.jpg")
+	data, err := os.ReadFile("testdata/test_gray.jpg")
 	if err != nil {
 		t.Skip("test_gray.jpg not available:", err)
 	}
@@ -220,10 +220,10 @@ func TestIntegrationOutputPPM(t *testing.T) {
 	}
 
 	info := &output.ImageInfo{
-		Width:        w,
-		Height:       h,
+		Width:         w,
+		Height:        h,
 		NumComponents: components,
-		ColorSpace:   colorSpace,
+		ColorSpace:    colorSpace,
 	}
 
 	if err := wr.Start(&buf, info); err != nil {
@@ -250,7 +250,7 @@ func TestIntegrationOutputPPM(t *testing.T) {
 }
 
 func TestIntegrationOutputBMP(t *testing.T) {
-	data, err := os.ReadFile("test_color.jpg")
+	data, err := os.ReadFile("testdata/test_color.jpg")
 	if err != nil {
 		t.Skip("test_color.jpg not available:", err)
 	}
@@ -267,10 +267,10 @@ func TestIntegrationOutputBMP(t *testing.T) {
 	}
 
 	info := &output.ImageInfo{
-		Width:        w,
-		Height:       h,
+		Width:         w,
+		Height:        h,
 		NumComponents: components,
-		ColorSpace:   output.ColorSpaceRGB,
+		ColorSpace:    output.ColorSpaceRGB,
 	}
 
 	if err := wr.Start(&buf, info); err != nil {
@@ -302,7 +302,7 @@ func TestIntegrationOutputBMP(t *testing.T) {
 }
 
 func TestIntegrationOutputTarga(t *testing.T) {
-	data, err := os.ReadFile("test_color.jpg")
+	data, err := os.ReadFile("testdata/test_color.jpg")
 	if err != nil {
 		t.Skip("test_color.jpg not available:", err)
 	}
@@ -319,10 +319,10 @@ func TestIntegrationOutputTarga(t *testing.T) {
 	}
 
 	info := &output.ImageInfo{
-		Width:        w,
-		Height:       h,
+		Width:         w,
+		Height:        h,
 		NumComponents: components,
-		ColorSpace:   output.ColorSpaceRGB,
+		ColorSpace:    output.ColorSpaceRGB,
 	}
 
 	if err := wr.Start(&buf, info); err != nil {

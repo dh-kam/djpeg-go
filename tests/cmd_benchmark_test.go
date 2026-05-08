@@ -1,4 +1,4 @@
-package main
+package djpeggo_test
 
 import (
 	"bytes"
@@ -8,18 +8,19 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/dh-kam/djpeg-go/internal/djpegcli"
 	"github.com/dh-kam/djpeg-go/internal/output"
 )
 
 func loadRandom100JPEGs(b *testing.B) [][]byte {
 	b.Helper()
 
-	matches, err := filepath.Glob("../../testdata/random100/*.jpg")
+	matches, err := filepath.Glob("testdata/random100/*.jpg")
 	if err != nil {
 		b.Fatal(err)
 	}
 	if len(matches) == 0 {
-		b.Skip("testdata/random100/*.jpg not available")
+		b.Skip("tests/testdata/random100/*.jpg not available")
 	}
 	sort.Strings(matches)
 
@@ -36,7 +37,7 @@ func loadRandom100JPEGs(b *testing.B) [][]byte {
 
 func benchmarkDecompressRandom100(b *testing.B, noSmooth bool) {
 	images := loadRandom100JPEGs(b)
-	opts := &config{
+	opts := &djpegcli.Options{
 		Format:    output.FormatPPM,
 		DctMethod: "int",
 		NoSmooth:  noSmooth,
@@ -46,7 +47,7 @@ func benchmarkDecompressRandom100(b *testing.B, noSmooth bool) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, data := range images {
-			if err := decompress(bytes.NewReader(data), io.Discard, opts); err != nil {
+			if err := djpegcli.Decompress(bytes.NewReader(data), io.Discard, opts); err != nil {
 				b.Fatal(err)
 			}
 		}

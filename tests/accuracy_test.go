@@ -81,7 +81,7 @@ func loadTestJPEG(t *testing.T, path string) []byte {
 }
 
 func TestExactMatchGrayscale(t *testing.T) {
-	jpegData := loadTestJPEG(t, "test_gray.jpg")
+	jpegData := loadTestJPEG(t, "testdata/test_gray.jpg")
 
 	ourPixels, w1, h1, nc1, err := decoder.DecodeToRGB(bytes.NewReader(jpegData))
 	if err != nil {
@@ -109,7 +109,7 @@ func TestExactMatchGrayscale(t *testing.T) {
 }
 
 func TestExactMatchColor444(t *testing.T) {
-	jpegData := loadTestJPEG(t, "test_color.jpg")
+	jpegData := loadTestJPEG(t, "testdata/test_color.jpg")
 
 	ourPixels, w1, h1, nc1, err := decoder.DecodeToRGB(bytes.NewReader(jpegData))
 	if err != nil {
@@ -135,7 +135,7 @@ func TestExactMatchColor444(t *testing.T) {
 }
 
 func TestExactMatchColor420(t *testing.T) {
-	jpegData := loadTestJPEG(t, "test_420.jpg")
+	jpegData := loadTestJPEG(t, "testdata/test_420.jpg")
 
 	ourPixels, w1, h1, nc1, err := decoder.DecodeToRGB(bytes.NewReader(jpegData))
 	if err != nil {

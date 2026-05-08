@@ -1,0 +1,10 @@
+af60376648c3bde86bef574d1ea868e30232866f1565ac58204564843afc6653  tests/testdata/pdf-reader-geotopo-p76-rgb-mismatch/README.md
+bb53694d2c814675b8c9335e1cfaf9c81d911a0fbcaafaac5cb03a2387e366ba  tests/testdata/pdf-reader-geotopo-p76-rgb-mismatch/actual-djpeg-go-default.png
+168603b595c44920d2316f2612540f02f4045d9edeb19c57dc315dbe3c29bc70  tests/testdata/pdf-reader-geotopo-p76-rgb-mismatch/actual-djpeg-go-default.ppm
+e27c5c3c1ba79f2cb25438e551320be7b7631d267f8c9b8390be05fae6cafca1  tests/testdata/pdf-reader-geotopo-p76-rgb-mismatch/actual-djpeg-go-nosmooth.png
+8ea686eef48851ca3a523ce92ece004aac3c72a734eefbd126eac810a56322aa  tests/testdata/pdf-reader-geotopo-p76-rgb-mismatch/actual-djpeg-go-nosmooth.ppm
+010f07ed63c5de8d8a55c9bce9d20c03189958429fce59895c2e53156a0b8a8d  tests/testdata/pdf-reader-geotopo-p76-rgb-mismatch/actual-djpeg-go-turbo-fancy.png
+3348bebf0fd8f981b464acfee87ebfe61954ea8599c3a21f7f20b01b84237a49  tests/testdata/pdf-reader-geotopo-p76-rgb-mismatch/actual-djpeg-go-turbo-fancy.ppm
+34492bd36c6d1a8563e5c8e16fa077ac97a68ae924099e25fa7e366fa54b4e5e  tests/testdata/pdf-reader-geotopo-p76-rgb-mismatch/input-geotopo-p76-rgb.jpg
+010f07ed63c5de8d8a55c9bce9d20c03189958429fce59895c2e53156a0b8a8d  tests/testdata/pdf-reader-geotopo-p76-rgb-mismatch/reference-imagemagick-convert.png
+60f095f573519357a359170632ff90ba9f0fd5cc5982f8d705fa6ad32b8051ee  tests/testdata/pdf-reader-geotopo-p76-rgb-mismatch/reference-poppler-pdfimages.png

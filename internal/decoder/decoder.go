@@ -4,6 +4,8 @@ package decoder
 import (
 	"errors"
 	"io"
+	"math"
+	"strings"
 
 	"github.com/dh-kam/djpeg-go/internal/color"
 	"github.com/dh-kam/djpeg-go/internal/huff"
@@ -54,7 +56,11 @@ type Decoder struct {
 	totalIMCURows  int
 	allDecoded     bool
 
-	DoFancyUpsampling bool
+	DoFancyUpsampling        bool
+	DisableChromaIDCTScaling bool
+
+	inputColorSpaceOverride    marker.ColorSpace
+	hasInputColorSpaceOverride bool
 }
 
 var (
@@ -87,6 +93,48 @@ func (dec *Decoder) SetFancyUpsampling(fancy bool) {
 	dec.d.DoFancyUpsampling = fancy
 }
 
+func (dec *Decoder) SetChromaIDCTScaling(enabled bool) {
+	dec.DisableChromaIDCTScaling = !enabled
+	dec.d.DisableChromaIDCTScaling = !enabled
+}
+
+// SetInputColorSpace overrides the JPEG sample colorspace inferred from
+// markers and component IDs. It is intended for containers such as PDF that
+// carry colorspace metadata outside the JPEG stream.
+func (dec *Decoder) SetInputColorSpace(space string) error {
+	var cs marker.ColorSpace
+	switch strings.ToLower(strings.TrimSpace(space)) {
+	case "", "auto":
+		dec.hasInputColorSpaceOverride = false
+		return nil
+	case "gray", "grey", "grayscale", "greyscale":
+		cs = marker.CSGrayScale
+	case "rgb":
+		cs = marker.CSRGB
+	case "ycbcr", "ycc":
+		cs = marker.CSYCbCr
+	default:
+		return errors.New("jpeg: unsupported input colorspace")
+	}
+	dec.inputColorSpaceOverride = cs
+	dec.hasInputColorSpaceOverride = true
+	dec.applyInputColorSpaceOverride()
+	return nil
+}
+
+func (dec *Decoder) applyInputColorSpaceOverride() {
+	if !dec.hasInputColorSpaceOverride {
+		return
+	}
+	dec.d.JPEGColorSpace = dec.inputColorSpaceOverride
+	switch dec.inputColorSpaceOverride {
+	case marker.CSGrayScale:
+		dec.d.OutColorSpace = marker.CSGrayScale
+	case marker.CSRGB, marker.CSYCbCr:
+		dec.d.OutColorSpace = marker.CSRGB
+	}
+}
+
 func (dec *Decoder) ReadHeader() (int, int, int, marker.ColorSpace, error) {
 	retcode, err := dec.d.ReadHeader(true)
 	if err != nil {
@@ -101,12 +149,15 @@ func (dec *Decoder) ReadHeader() (int, int, int, marker.ColorSpace, error) {
 	if dec.d.ArithCodeFlag {
 		return 0, 0, 0, 0, errors.New("jpeg: arithmetic coding not supported")
 	}
+	dec.applyInputColorSpaceOverride()
 	return dec.d.ImageWidth, dec.d.ImageHeight, dec.d.NumComponents, dec.d.JPEGColorSpace, nil
 }
 
 func (dec *Decoder) StartDecompress() error {
 	d := dec.d
+	dec.applyInputColorSpaceOverride()
 	d.DoFancyUpsampling = dec.DoFancyUpsampling
+	d.DisableChromaIDCTScaling = dec.DisableChromaIDCTScaling
 	if err := d.StartInputPass(); err != nil {
 		return err
 	}
@@ -368,6 +419,11 @@ func (dec *Decoder) upsampleAndConvert(outputRow []byte) {
 		return
 	}
 
+	if d.JPEGColorSpace == marker.CSRGB && d.OutColorSpace == marker.CSRGB && d.NumComponents >= 3 {
+		dec.upsampleRGB(outputRow)
+		return
+	}
+
 	yRow := dec.rowGroupCtr
 	if yRow >= len(dec.componentBuf[0]) {
 		yRow = len(dec.componentBuf[0]) - 1
@@ -419,7 +475,7 @@ func (dec *Decoder) upsampleAndConvert(outputRow []byte) {
 				cb := int(cbRow[cCol])
 				cr := int(crRow[cCol])
 				r := y + crR[cr]
-				g := y + ((cbG[cb] + crG[cr]) >> 16)
+				g := y + dec.greenContribution(cb, cr, cbG, crG)
 				b := y + cbB[cb]
 				idx := col * 3
 				outputRow[idx] = rl[r+rlColorOffset]
@@ -518,7 +574,7 @@ func (dec *Decoder) upsampleAndConvert(outputRow []byte) {
 				uCol = dstLen - 1
 			}
 			r := y + crR[crUp[uCol]]
-			g := y + (cbG[cbUp[uCol]]+crG[crUp[uCol]])>>16
+			g := y + dec.greenContribution(cbUp[uCol], crUp[uCol], cbG, crG)
 			b := y + cbB[cbUp[uCol]]
 			idx := col * 3
 			outputRow[idx] = rl[r+rlColorOffset]
@@ -539,7 +595,7 @@ func (dec *Decoder) upsampleAndConvert(outputRow []byte) {
 			cb := int(cbRow[cCol])
 			cr := int(crRow[cCol])
 			r := y + crR[cr]
-			g := y + ((cbG[cb] + crG[cr]) >> 16)
+			g := y + dec.greenContribution(cb, cr, cbG, crG)
 			b := y + cbB[cb]
 			idx := col * 3
 			outputRow[idx] = rl[r+rlColorOffset]
@@ -558,7 +614,7 @@ func (dec *Decoder) upsampleAndConvert(outputRow []byte) {
 			cb := int(cbRow[col])
 			cr := int(crRow[col])
 			r := y + crR[cr]
-			g := y + ((cbG[cb] + crG[cr]) >> 16)
+			g := y + dec.greenContribution(cb, cr, cbG, crG)
 			b := y + cbB[cb]
 			idx := col * 3
 			outputRow[idx] = rl[r+rlColorOffset]
@@ -577,7 +633,7 @@ func (dec *Decoder) upsampleAndConvert(outputRow []byte) {
 			cb := int(cbRow[col])
 			cr := int(crRow[col])
 			r := y + crR[cr]
-			g := y + ((cbG[cb] + crG[cr]) >> 16)
+			g := y + dec.greenContribution(cb, cr, cbG, crG)
 			b := y + cbB[cb]
 			idx := col * 3
 			outputRow[idx] = rl[r+rlColorOffset]
@@ -585,6 +641,165 @@ func (dec *Decoder) upsampleAndConvert(outputRow []byte) {
 			outputRow[idx+2] = rl[b+rlColorOffset]
 		}
 	}
+}
+
+func (dec *Decoder) greenContribution(cb, cr int, cbG, crG []int) int {
+	if dec.DisableChromaIDCTScaling {
+		cbf := float64(cb - 128)
+		crf := float64(cr - 128)
+		return int(math.Floor(-0.344143*cbf - 0.71414*crf + 0.5))
+	}
+	return (cbG[cb] + crG[cr]) >> 16
+}
+
+func (dec *Decoder) upsampleRGB(outputRow []byte) {
+	d := dec.d
+	outputWidth := d.OutputWidth
+
+	if cap(dec.vCbRow) < outputWidth {
+		dec.vCbRow = make([]int, outputWidth)
+	}
+	if cap(dec.vCrRow) < outputWidth {
+		dec.vCrRow = make([]int, outputWidth)
+	}
+
+	green := dec.vCbRow[:outputWidth]
+	blue := dec.vCrRow[:outputWidth]
+	dec.upsampleComponentToInt(1, dec.rowGroupCtr, green)
+	dec.upsampleComponentToInt(2, dec.rowGroupCtr, blue)
+
+	redRow := dec.componentBuf[0][clampIndex(dec.rowGroupCtr, len(dec.componentBuf[0]))]
+	for col := 0; col < outputWidth; col++ {
+		rCol := col
+		if rCol >= len(redRow) {
+			rCol = len(redRow) - 1
+		}
+		idx := col * 3
+		outputRow[idx] = redRow[rCol]
+		outputRow[idx+1] = byte(green[col])
+		outputRow[idx+2] = byte(blue[col])
+	}
+}
+
+func (dec *Decoder) upsampleComponentToInt(componentIndex, outputRow int, dst []int) {
+	d := dec.d
+	comp := &d.CompInfo[componentIndex]
+	buf := dec.componentBuf[componentIndex]
+	outputWidth := len(dst)
+	fullH := d.MaxHSampFactor * d.MinDCTHScaledSize
+	fullV := d.MaxVSampFactor * d.MinDCTVScaledSize
+	compH := comp.HSampFactor * comp.DCHScaledSize
+	compV := comp.VSampFactor * comp.DCVScaledSize
+	hRatio := ratioOrOne(fullH, compH)
+	vRatio := ratioOrOne(fullV, compV)
+	hUpsample := hRatio > 1
+	vUpsample := vRatio > 1
+
+	if hRatio == 2 && vRatio == 2 && dec.DoFancyUpsampling {
+		dec.upsampleH2V2FancyComponentToInt(buf, outputRow, dst)
+		return
+	}
+
+	srcRowIndex := outputRow
+	if vUpsample {
+		srcRowIndex = outputRow / vRatio
+	}
+	srcRow := buf[clampIndex(srcRowIndex, len(buf))]
+	for col := 0; col < outputWidth; col++ {
+		srcCol := col
+		if hUpsample {
+			srcCol = col / hRatio
+		}
+		if srcCol >= len(srcRow) {
+			srcCol = len(srcRow) - 1
+		}
+		dst[col] = int(srcRow[srcCol])
+	}
+}
+
+func (dec *Decoder) upsampleH2V2FancyComponentToInt(buf [][]byte, outputRow int, dst []int) {
+	srcRowIndex := outputRow >> 1
+	if srcRowIndex >= len(buf) {
+		srcRowIndex = len(buf) - 1
+	}
+	nearRow := srcRowIndex
+	var farRow int
+	if (outputRow & 1) == 0 {
+		farRow = srcRowIndex - 1
+		if farRow < 0 {
+			farRow = 0
+		}
+	} else {
+		farRow = srcRowIndex + 1
+		if farRow >= len(buf) {
+			farRow = len(buf) - 1
+		}
+	}
+
+	near := buf[nearRow]
+	far := buf[farRow]
+	srcLen := len(near)
+	dstLen := srcLen * 2
+	if dstLen > len(dst) {
+		dstLen = len(dst)
+	}
+	if srcLen == 0 || dstLen == 0 {
+		return
+	}
+
+	thisColsum := int(near[0])*3 + int(far[0])
+	var nextColsum int
+	if srcLen > 1 {
+		nextColsum = int(near[1])*3 + int(far[1])
+	}
+	dst[0] = (thisColsum*4 + 8) >> 4
+	if dstLen > 1 {
+		dst[1] = (thisColsum*3 + nextColsum + 7) >> 4
+	}
+	lastColsum := thisColsum
+	thisColsum = nextColsum
+
+	for srcCol := 1; srcCol < srcLen-1; srcCol++ {
+		if srcCol*2+1 >= dstLen {
+			break
+		}
+		nextColsum = int(near[srcCol+1])*3 + int(far[srcCol+1])
+		dst[srcCol*2] = (thisColsum*3 + lastColsum + 8) >> 4
+		dst[srcCol*2+1] = (thisColsum*3 + nextColsum + 7) >> 4
+		lastColsum = thisColsum
+		thisColsum = nextColsum
+	}
+
+	if srcLen > 1 && dstLen >= 2 {
+		lastIdx := dstLen - 1
+		dst[lastIdx-1] = (thisColsum*3 + lastColsum + 8) >> 4
+		dst[lastIdx] = (thisColsum*4 + 7) >> 4
+	}
+
+	for col := dstLen; col < len(dst); col++ {
+		dst[col] = dst[dstLen-1]
+	}
+}
+
+func ratioOrOne(full, partial int) int {
+	if partial <= 0 || full <= partial {
+		return 1
+	}
+	ratio := full / partial
+	if ratio < 1 {
+		return 1
+	}
+	return ratio
+}
+
+func clampIndex(idx, length int) int {
+	if idx < 0 {
+		return 0
+	}
+	if idx >= length {
+		return length - 1
+	}
+	return idx
 }
 
 func (dec *Decoder) buildHuffmanTables() error {

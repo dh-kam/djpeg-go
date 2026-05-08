@@ -2,7 +2,7 @@ import os
 import random
 from PIL import Image
 
-out_dir = "testdata/random100"
+out_dir = "tests/testdata/random100"
 os.makedirs(out_dir, exist_ok=True)
 
 print(f"Generating 100 images to {out_dir}...")

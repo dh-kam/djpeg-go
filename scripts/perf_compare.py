@@ -72,7 +72,7 @@ def summarize(times: list[float]) -> dict[str, float]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--go-djpeg", default="/tmp/djpeg_go_perf", help="path to built Go djpeg")
-    parser.add_argument("--images", default="testdata/random100/*.jpg", help="glob relative to repo root")
+    parser.add_argument("--images", default="tests/testdata/random100/*.jpg", help="glob relative to repo root")
     parser.add_argument("--mode", choices=("default", "nosmooth", "both"), default="both")
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--repeat", type=int, default=5)
