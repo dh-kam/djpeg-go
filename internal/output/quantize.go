@@ -122,6 +122,9 @@ func quantizeColormap(rows [][]byte, info *ImageInfo, opts QuantizeOptions) (*Co
 	if desired > 256 {
 		return nil, fmt.Errorf("quantize: cannot quantize to more than 256 colors")
 	}
+	if opts.Colormap == nil && info.ColorSpace == ColorSpaceRGB && desired < 8 {
+		return nil, fmt.Errorf("quantize: cannot quantize RGB output to fewer than 8 colors")
+	}
 
 	switch info.ColorSpace {
 	case ColorSpaceGrayscale:

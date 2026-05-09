@@ -20,21 +20,21 @@ func TestQuantizeRowsDefaultBuildsImagePalette(t *testing.T) {
 	}
 
 	_, cm, err := QuantizeRows(rows, info, QuantizeOptions{
-		DesiredColors: 2,
+		DesiredColors: 8,
 		Dither:        DitherNone,
 	})
 	if err != nil {
 		t.Fatalf("QuantizeRows default failed: %v", err)
 	}
 	if cm.NumColors != 2 {
-		t.Fatalf("default palette colors = %d, want 2", cm.NumColors)
+		t.Fatalf("default palette colors = %d, want the two image colors", cm.NumColors)
 	}
 	if !colormapHasRGB(cm, 0, 0, 0) || !colormapHasRGB(cm, 255, 0, 0) {
 		t.Fatalf("default palette = %#v, want black and red from image", cm.Maps)
 	}
 
 	_, onePass, err := QuantizeRows(rows, info, QuantizeOptions{
-		DesiredColors: 2,
+		DesiredColors: 8,
 		Dither:        DitherNone,
 		OnePass:       true,
 	})
@@ -43,6 +43,21 @@ func TestQuantizeRowsDefaultBuildsImagePalette(t *testing.T) {
 	}
 	if colormapsEqual(cm, onePass) {
 		t.Fatal("one-pass palette unexpectedly matched two-pass image palette")
+	}
+}
+
+func TestQuantizeRowsRejectsTooFewGeneratedRGBColors(t *testing.T) {
+	t.Parallel()
+
+	rows := [][]byte{{0, 0, 0, 255, 255, 255}}
+	info := &ImageInfo{
+		Width:         2,
+		Height:        1,
+		NumComponents: 3,
+		ColorSpace:    ColorSpaceRGB,
+	}
+	if _, _, err := QuantizeRows(rows, info, QuantizeOptions{DesiredColors: 7}); err == nil {
+		t.Fatal("QuantizeRows with seven RGB colors succeeded, want error")
 	}
 }
 

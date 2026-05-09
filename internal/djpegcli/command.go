@@ -328,7 +328,7 @@ func Decompress(input io.Reader, out io.Writer, opts *Options) error {
 		}
 		indexRows, qmap, err := output.QuantizeRows(rows, info, quantizeOptions)
 		if err != nil {
-			return fmt.Errorf("quantizing output: %w", err)
+			return fmt.Errorf("%w: quantizing output: %v", djpeg.ErrInvalidOption, err)
 		}
 		info.Colormap = qmap
 		info.DesiredColors = qmap.NumColors

@@ -268,7 +268,7 @@ func TestColorsOptionQuantizesPPM(t *testing.T) {
 
 	ppm := decompressForOptionTest(t, data, &djpegcli.Options{
 		Format:    output.FormatPPM,
-		NumColors: 4,
+		NumColors: 8,
 	})
 	_, _, _, components, pixels, err := parsePNMPixels(ppm)
 	if err != nil {
@@ -277,8 +277,29 @@ func TestColorsOptionQuantizesPPM(t *testing.T) {
 	if components != 3 {
 		t.Fatalf("components = %d, want RGB", components)
 	}
-	if got := countUniqueRGB(pixels); got > 4 {
-		t.Fatalf("unique colors = %d, want <= 4", got)
+	if got := countUniqueRGB(pixels); got > 8 {
+		t.Fatalf("unique colors = %d, want <= 8", got)
+	}
+}
+
+func TestColorsOptionRejectsTooFewRGBColors(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile("testdata/test_420.jpg")
+	if err != nil {
+		t.Skip("test_420.jpg not available:", err)
+	}
+
+	var out bytes.Buffer
+	err = djpegcli.Decompress(bytes.NewReader(data), &out, &djpegcli.Options{
+		Format:    output.FormatPPM,
+		NumColors: 7,
+	})
+	if err == nil {
+		t.Fatal("expected invalid option error")
+	}
+	if !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("error = %v, want ErrInvalidOption", err)
 	}
 }
 

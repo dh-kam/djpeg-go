@@ -196,7 +196,7 @@ func TestDecoderMutableQuantizationParameters(t *testing.T) {
 	if err := dec.SetOutputGamma(1.0); err != nil {
 		t.Fatalf("SetOutputGamma failed: %v", err)
 	}
-	if err := dec.SetQuantizeColors(4); err != nil {
+	if err := dec.SetQuantizeColors(8); err != nil {
 		t.Fatalf("SetQuantizeColors failed: %v", err)
 	}
 	if err := dec.SetDitherMode(djpeg.DitherNone); err != nil {
@@ -210,11 +210,11 @@ func TestDecoderMutableQuantizationParameters(t *testing.T) {
 		t.Fatalf("StartDecompress failed: %v", err)
 	}
 	out := dec.OutputConfig()
-	if out.PixelFormat != djpeg.PixelFormatIndexed8 || !out.Quantized || out.DesiredNumColors != 4 {
-		t.Fatalf("output config = %+v, want indexed quantized output with 4 desired colors", out)
+	if out.PixelFormat != djpeg.PixelFormatIndexed8 || !out.Quantized || out.DesiredNumColors != 8 {
+		t.Fatalf("output config = %+v, want indexed quantized output with 8 desired colors", out)
 	}
-	if palette := dec.Palette(); len(palette) == 0 || len(palette) > 4 {
-		t.Fatalf("palette length = %d, want 1..4", len(palette))
+	if palette := dec.Palette(); len(palette) == 0 || len(palette) > 8 {
+		t.Fatalf("palette length = %d, want 1..8", len(palette))
 	}
 
 	row := make([]byte, out.Stride)
@@ -947,7 +947,7 @@ func TestDecoderQuantizedScanlines(t *testing.T) {
 		t.Skipf("fixture missing: %v", err)
 	}
 
-	dec := djpeg.NewDecoder(bytes.NewReader(data), djpeg.WithQuantizeColors(4))
+	dec := djpeg.NewDecoder(bytes.NewReader(data), djpeg.WithQuantizeColors(8))
 	cfg, err := dec.ReadHeader()
 	if err != nil {
 		t.Fatalf("ReadHeader quantized failed: %v", err)
@@ -1223,6 +1223,13 @@ func TestDecodeRasterQuantizedInvalidOptions(t *testing.T) {
 	}
 	if _, err := djpeg.DecodeRasterConfig(bytes.NewReader(data), djpeg.WithQuantizeColors(1)); !errors.Is(err, djpeg.ErrInvalidOption) {
 		t.Fatalf("DecodeRasterConfig WithQuantizeColors(1) error = %v, want ErrInvalidOption", err)
+	}
+	colorData, err := os.ReadFile("tests/testdata/color_8x8_444.jpg")
+	if err != nil {
+		t.Skipf("color fixture missing: %v", err)
+	}
+	if _, err := djpeg.DecodeRaster(bytes.NewReader(colorData), djpeg.WithQuantizeColors(7)); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("DecodeRaster WithQuantizeColors(7) error = %v, want ErrInvalidOption", err)
 	}
 
 	cmykData, err := base64.StdEncoding.DecodeString(tinyCMYKJPEGBase64)
