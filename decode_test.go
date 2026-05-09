@@ -1834,6 +1834,87 @@ func TestDecodeRasterConfigExposesHeaderMetadata(t *testing.T) {
 	}
 }
 
+func TestDecoderExposesScanAndArithmeticMetadata(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	cfg, err := dec.ReadHeader()
+	if err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	scan := dec.ScanParameters()
+	if cfg.Scan != scan {
+		t.Fatalf("Config scan = %+v, Decoder scan = %+v, want equal", cfg.Scan, scan)
+	}
+	if scan.ComponentsInScan != 1 || scan.SpectralStart != 0 || scan.SpectralEnd != 63 ||
+		scan.ApproxHigh != 0 || scan.ApproxLow != 0 {
+		t.Fatalf("baseline scan params = %+v, want one-component 0..63 scan", scan)
+	}
+	if cfg.CCIR601Sampling || dec.CCIR601Sampling() {
+		t.Fatalf("CCIR601 sampling cfg=%v dec=%v, want false", cfg.CCIR601Sampling, dec.CCIR601Sampling())
+	}
+
+	table, ok := dec.ArithmeticConditioningTable(0)
+	if !ok {
+		t.Fatal("ArithmeticConditioningTable(0) returned !ok")
+	}
+	if table.DCLower != 0 || table.DCUpper != 1 || table.ACK != 5 {
+		t.Fatalf("default arithmetic table 0 = %+v, want 0/1/5", table)
+	}
+	if _, ok := dec.ArithmeticConditioningTable(16); ok {
+		t.Fatal("ArithmeticConditioningTable(16) returned ok, want false")
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress failed: %v", err)
+	}
+	scan = dec.ScanParameters()
+	if scan.BlocksInMCU != 1 || scan.MCUsPerRow != 1 || scan.MCURowsInScan != 1 {
+		t.Fatalf("started scan geometry = %+v, want one 8x8 grayscale MCU", scan)
+	}
+	row := make([]byte, dec.OutputConfig().Stride)
+	for dec.OutputScanline() < dec.OutputConfig().Height {
+		if _, err := dec.ReadScanlines([][]byte{row}); err != nil {
+			t.Fatalf("ReadScanlines failed: %v", err)
+		}
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress failed: %v", err)
+	}
+}
+
+func TestDecoderExposesDACArithmeticMetadata(t *testing.T) {
+	dec := djpeg.NewDecoder(bytes.NewReader(tinyArithmeticJPEGWithDAC()))
+	cfg, status, err := dec.ReadHeaderRequireImage(true)
+	if err != nil {
+		t.Fatalf("ReadHeaderRequireImage arithmetic failed: %v", err)
+	}
+	if status != djpeg.HeaderOK || !cfg.Arithmetic || !dec.IsArithmetic() {
+		t.Fatalf("arithmetic header status=%v cfg.Arithmetic=%v dec.IsArithmetic=%v, want ok/arithmetic",
+			status, cfg.Arithmetic, dec.IsArithmetic())
+	}
+	table, ok := dec.ArithmeticConditioningTable(0)
+	if !ok {
+		t.Fatal("ArithmeticConditioningTable(0) returned !ok")
+	}
+	if table.DCLower != 1 || table.DCUpper != 2 || table.ACK != 7 {
+		t.Fatalf("DAC arithmetic table 0 = %+v, want dcL=1 dcU=2 acK=7", table)
+	}
+	tables := dec.ArithmeticConditioningTables()
+	if tables[0] != table || tables[1].DCLower != 0 || tables[1].DCUpper != 1 || tables[1].ACK != 5 {
+		t.Fatalf("arithmetic tables copy[0]=%+v copy[1]=%+v, want DAC override and defaults",
+			tables[0], tables[1])
+	}
+	if scan := dec.ScanParameters(); scan.SpectralStart != 0 || scan.SpectralEnd != 63 {
+		t.Fatalf("arithmetic scan params = %+v, want 0..63", scan)
+	}
+	if err := dec.StartDecompress(); !errors.Is(err, djpeg.ErrUnsupported) {
+		t.Fatalf("StartDecompress arithmetic error = %v, want ErrUnsupported", err)
+	}
+}
+
 func TestDecodeRasterConfigExposesDecompressParameters(t *testing.T) {
 	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
 	if err != nil {
@@ -2051,6 +2132,47 @@ func tinyAdobeCMYKJPEG(t *testing.T, transform byte, componentIDs [4]byte) []byt
 		pos += length
 	}
 	return data
+}
+
+func tinyArithmeticJPEGWithDAC() []byte {
+	var buf bytes.Buffer
+	buf.Write([]byte{0xff, 0xd8})
+
+	buf.Write([]byte{0xff, 0xdb})
+	buf.Write([]byte{0x00, 0x43})
+	buf.WriteByte(0x00)
+	for i := 0; i < 64; i++ {
+		buf.WriteByte(0x01)
+	}
+
+	buf.Write([]byte{0xff, 0xcc})
+	buf.Write([]byte{0x00, 0x06})
+	buf.WriteByte(0x00)
+	buf.WriteByte(0x21)
+	buf.WriteByte(0x10)
+	buf.WriteByte(0x07)
+
+	buf.Write([]byte{0xff, 0xc9})
+	buf.Write([]byte{0x00, 0x0b})
+	buf.WriteByte(0x08)
+	buf.Write([]byte{0x00, 0x08})
+	buf.Write([]byte{0x00, 0x08})
+	buf.WriteByte(0x01)
+	buf.WriteByte(0x01)
+	buf.WriteByte(0x11)
+	buf.WriteByte(0x00)
+
+	buf.Write([]byte{0xff, 0xda})
+	buf.Write([]byte{0x00, 0x08})
+	buf.WriteByte(0x01)
+	buf.WriteByte(0x01)
+	buf.WriteByte(0x00)
+	buf.WriteByte(0x00)
+	buf.WriteByte(0x3f)
+	buf.WriteByte(0x00)
+	buf.Write([]byte{0x00, 0x00})
+	buf.Write([]byte{0xff, 0xd9})
+	return buf.Bytes()
 }
 
 func TestDecodeRasterWithScale(t *testing.T) {

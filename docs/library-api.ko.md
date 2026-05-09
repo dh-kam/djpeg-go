@@ -189,8 +189,11 @@ type Config struct {
 	DesiredNumColors int
 	ActualNumColors  int
 	RawDataOut       bool
+	BufferedImage    bool
 	OutputGamma      float64
 	DoBlockSmoothing bool
+	CCIR601Sampling  bool
+	Scan             ScanParameters
 }
 ```
 
@@ -611,6 +614,9 @@ dec.SetProgressMonitor(func(p libjpeg.Progress) {
 - `SawJFIFMarker`, `JFIFMajorVersion`, `JFIFMinorVersion`, `DensityUnit`,
   `XDensity`, `YDensity`는 JFIF APP0 metadata입니다.
 - `SawAdobeMarker`, `AdobeTransform`은 Adobe APP14 metadata입니다.
+- `CCIR601Sampling`은 JFIF extension sampling flag입니다.
+- `Scan`은 현재 SOS/per-scan field를 노출합니다. component count, MCU
+  geometry, `Ss`, `Se`, `Ah`, `Al`, derived limiting spectral end를 포함합니다.
 
 Scanline decoder에서도 같은 상태를 직접 확인할 수 있습니다.
 
@@ -627,6 +633,8 @@ _ = dec.InputComplete()
 _ = dec.IsBaseline()
 _ = dec.IsProgressive()
 _ = dec.IsArithmetic()
+_ = dec.CCIR601Sampling()
+_ = dec.ScanParameters()
 ```
 
 `Abort`는 현재 decompression operation을 중단하고 public decoder state를
@@ -725,7 +733,19 @@ for _, component := range dec.Components() {
 }
 
 _ = dec.RestartInterval()
+
+arith, ok := dec.ArithmeticConditioningTable(0)
+if ok {
+	_ = arith.DCLower
+	_ = arith.DCUpper
+	_ = arith.ACK
+}
+_ = dec.ArithmeticConditioningTables()
 ```
+
+Arithmetic conditioning table은 libjpeg의 `arith_dc_L`, `arith_dc_U`,
+`arith_ac_K` 배열에 대응합니다. Stream에 DAC marker가 없더라도 default 값을
+확인할 수 있고, DAC override는 header parsing 이후 반영됩니다.
 
 Table-only stream에서는 `ReadHeaderRequireImage(false)`를 호출합니다.
 `HeaderTablesOnly` 상태에서는 image config는 비어 있지만, EOI 전에 parsing된

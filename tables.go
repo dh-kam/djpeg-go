@@ -20,3 +20,12 @@ type HuffmanTable struct {
 	Values    [256]uint8
 	SentTable bool
 }
+
+// ArithmeticConditioningTable is one JPEG arithmetic conditioning table entry.
+// It maps to libjpeg's arith_dc_L, arith_dc_U, and arith_ac_K arrays at the
+// same index.
+type ArithmeticConditioningTable struct {
+	DCLower uint8
+	DCUpper uint8
+	ACK     uint8
+}

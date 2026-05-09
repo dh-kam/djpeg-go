@@ -55,6 +55,8 @@ type Config struct {
 	BufferedImage     bool
 	OutputGamma       float64
 	DoBlockSmoothing  bool
+	CCIR601Sampling   bool
+	Scan              ScanParameters
 }
 
 // ImageConfig converts Config to the standard image.Config type.
@@ -1119,6 +1121,32 @@ func (d *Decoder) HuffmanTable(index int, class HuffmanTableClass) (HuffmanTable
 	return HuffmanTable{Bits: bits, Values: values, SentTable: sent}, true
 }
 
+// ArithmeticConditioningTable returns the parsed arithmetic conditioning table
+// values for index. Values are available after ReadHeader, including defaults
+// when no DAC marker has overridden them.
+func (d *Decoder) ArithmeticConditioningTable(index int) (ArithmeticConditioningTable, bool) {
+	dcL, dcU, acK, ok := d.dec.ArithmeticConditioningTable(index)
+	if !ok {
+		return ArithmeticConditioningTable{}, false
+	}
+	return ArithmeticConditioningTable{DCLower: dcL, DCUpper: dcU, ACK: acK}, true
+}
+
+// ArithmeticConditioningTables returns all libjpeg arithmetic conditioning
+// table values as a copy.
+func (d *Decoder) ArithmeticConditioningTables() [16]ArithmeticConditioningTable {
+	dcL, dcU, acK := d.dec.ArithmeticConditioningTables()
+	var out [16]ArithmeticConditioningTable
+	for i := range out {
+		out[i] = ArithmeticConditioningTable{
+			DCLower: dcL[i],
+			DCUpper: dcU[i],
+			ACK:     acK[i],
+		}
+	}
+	return out
+}
+
 // Components returns parsed JPEG component metadata after ReadHeader.
 func (d *Decoder) Components() []Component {
 	internal := d.dec.Components()
@@ -1151,6 +1179,18 @@ func convertComponent(comp internaldecoder.Component) Component {
 // RestartInterval returns the parsed DRI restart interval from the header.
 func (d *Decoder) RestartInterval() uint {
 	return d.dec.RestartInterval()
+}
+
+// ScanParameters returns current SOS/per-scan parameters from the parsed
+// header. For baseline JPEGs these are usually Ss=0, Se=63, Ah=0, Al=0.
+func (d *Decoder) ScanParameters() ScanParameters {
+	return convertScanParameters(d.dec.ScanParameters())
+}
+
+// CCIR601Sampling reports whether the stream used the JFIF APP0 extension
+// sampling marker that libjpeg exposes as CCIR601_sampling.
+func (d *Decoder) CCIR601Sampling() bool {
+	return d.dec.CCIR601Sampling()
 }
 
 // OutputConfig returns output metadata after Start. Before Start, it returns
@@ -1698,6 +1738,8 @@ func (d *Decoder) populateHeaderMetadata(cfg *Config) {
 	cfg.BufferedImage = d.opts.BufferedImage
 	cfg.OutputGamma = d.dec.OutputGamma()
 	cfg.DoBlockSmoothing = d.dec.DoBlockSmoothing()
+	cfg.CCIR601Sampling = d.dec.CCIR601Sampling()
+	cfg.Scan = convertScanParameters(d.dec.ScanParameters())
 	sawJFIF, major, minor, densityUnit, xDensity, yDensity := d.dec.JFIFInfo()
 	cfg.SawJFIFMarker = sawJFIF
 	cfg.JFIFMajorVersion = major
@@ -1708,6 +1750,20 @@ func (d *Decoder) populateHeaderMetadata(cfg *Config) {
 	sawAdobe, transform := d.dec.AdobeInfo()
 	cfg.SawAdobeMarker = sawAdobe
 	cfg.AdobeTransform = transform
+}
+
+func convertScanParameters(scan internaldecoder.ScanParameters) ScanParameters {
+	return ScanParameters{
+		ComponentsInScan:    scan.ComponentsInScan,
+		MCUsPerRow:          scan.MCUsPerRow,
+		MCURowsInScan:       scan.MCURowsInScan,
+		BlocksInMCU:         scan.BlocksInMCU,
+		SpectralStart:       scan.SpectralStart,
+		SpectralEnd:         scan.SpectralEnd,
+		ApproxHigh:          scan.ApproxHigh,
+		ApproxLow:           scan.ApproxLow,
+		LimitingSpectralEnd: scan.LimitingSpectralEnd,
+	}
 }
 
 func configFromHeader(width, height, inputComponents int, inputCS marker.ColorSpace) Config {

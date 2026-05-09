@@ -127,6 +127,19 @@ type CoefficientComponent struct {
 	Blocks         []CoefficientBlock
 }
 
+// ScanParameters describes the current SOS/per-scan decoder parameters.
+type ScanParameters struct {
+	ComponentsInScan    int
+	MCUsPerRow          int
+	MCURowsInScan       int
+	BlocksInMCU         int
+	SpectralStart       int
+	SpectralEnd         int
+	ApproxHigh          int
+	ApproxLow           int
+	LimitingSpectralEnd int
+}
+
 const rlColorOffset = huff.RangeSubset
 
 func New(r io.Reader) *Decoder {
@@ -518,6 +531,35 @@ func (dec *Decoder) AdobeInfo() (saw bool, transform uint8) {
 
 func (dec *Decoder) RestartInterval() uint {
 	return dec.d.RestartInterval
+}
+
+func (dec *Decoder) CCIR601Sampling() bool {
+	return dec.d.CCIR601Sampling
+}
+
+func (dec *Decoder) ScanParameters() ScanParameters {
+	return ScanParameters{
+		ComponentsInScan:    dec.d.CompsInScan,
+		MCUsPerRow:          dec.d.MCUsPerRow,
+		MCURowsInScan:       dec.d.MCURowsInScan,
+		BlocksInMCU:         dec.d.BlocksInMCU,
+		SpectralStart:       dec.d.Ss,
+		SpectralEnd:         dec.d.Se,
+		ApproxHigh:          dec.d.Ah,
+		ApproxLow:           dec.d.Al,
+		LimitingSpectralEnd: dec.d.LimSe,
+	}
+}
+
+func (dec *Decoder) ArithmeticConditioningTable(index int) (dcL, dcU, acK uint8, ok bool) {
+	if index < 0 || index >= marker.NumArithTbls {
+		return 0, 0, 0, false
+	}
+	return dec.d.ArithDCL[index], dec.d.ArithDCU[index], dec.d.ArithACK[index], true
+}
+
+func (dec *Decoder) ArithmeticConditioningTables() (dcL, dcU, acK [marker.NumArithTbls]uint8) {
+	return dec.d.ArithDCL, dec.d.ArithDCU, dec.d.ArithACK
 }
 
 func (dec *Decoder) Components() []Component {

@@ -192,8 +192,11 @@ type Config struct {
 	DesiredNumColors int
 	ActualNumColors  int
 	RawDataOut       bool
+	BufferedImage    bool
 	OutputGamma      float64
 	DoBlockSmoothing bool
+	CCIR601Sampling  bool
+	Scan             ScanParameters
 }
 ```
 
@@ -618,6 +621,9 @@ helper APIs:
 - `SawJFIFMarker`, `JFIFMajorVersion`, `JFIFMinorVersion`, `DensityUnit`,
   `XDensity`, and `YDensity` expose parsed JFIF APP0 metadata.
 - `SawAdobeMarker` and `AdobeTransform` expose parsed Adobe APP14 metadata.
+- `CCIR601Sampling` exposes the JFIF extension sampling flag.
+- `Scan` exposes the current SOS/per-scan fields: component count, MCU
+  geometry, `Ss`, `Se`, `Ah`, `Al`, and the derived limiting spectral end.
 
 The scanline decoder exposes the same state directly:
 
@@ -634,6 +640,8 @@ _ = dec.InputComplete()
 _ = dec.IsBaseline()
 _ = dec.IsProgressive()
 _ = dec.IsArithmetic()
+_ = dec.CCIR601Sampling()
+_ = dec.ScanParameters()
 ```
 
 `Abort` stops the current decompression operation and clears the public decoder
@@ -732,7 +740,19 @@ for _, component := range dec.Components() {
 }
 
 _ = dec.RestartInterval()
+
+arith, ok := dec.ArithmeticConditioningTable(0)
+if ok {
+	_ = arith.DCLower
+	_ = arith.DCUpper
+	_ = arith.ACK
+}
+_ = dec.ArithmeticConditioningTables()
 ```
+
+Arithmetic conditioning tables mirror libjpeg's `arith_dc_L`, `arith_dc_U`,
+and `arith_ac_K` arrays. Defaults are exposed even when the stream does not
+carry DAC markers, and DAC overrides are visible after header parsing.
 
 For table-only streams, call `ReadHeaderRequireImage(false)`. A
 `HeaderTablesOnly` status leaves the image config empty, but quantization and

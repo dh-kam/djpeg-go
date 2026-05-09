@@ -42,3 +42,18 @@ type CoefficientComponent struct {
 	HeightInBlocks int
 	Blocks         []CoefficientBlock
 }
+
+// ScanParameters exposes the current SOS/per-scan decompressor parameters.
+// These map to libjpeg fields such as comps_in_scan, Ss, Se, Ah, Al, and the
+// derived MCU geometry for the current scan.
+type ScanParameters struct {
+	ComponentsInScan    int
+	MCUsPerRow          int
+	MCURowsInScan       int
+	BlocksInMCU         int
+	SpectralStart       int
+	SpectralEnd         int
+	ApproxHigh          int
+	ApproxLow           int
+	LimitingSpectralEnd int
+}
