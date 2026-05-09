@@ -18,7 +18,7 @@ const (
 	DCTSize2        = 64 // DCTSIZE2 = 8*8
 	MaxCompsInScan  = 4  // MAX_COMPS_IN_SCAN
 	NumHuffTbls     = 4  // NUM_HFF_TBLS
-	NumArithTbls    = 4  // NUM_ARITH_TBLS
+	NumArithTbls    = 16 // NUM_ARITH_TBLS
 	DMaxBlocksInMCU = 10 // D_MAX_BLOCKS_IN_MCU
 
 	// Bit-reading constants

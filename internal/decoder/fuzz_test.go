@@ -206,8 +206,7 @@ func TestDecoderProgressiveHeader(t *testing.T) {
 	}
 }
 
-// TestDecoderArithmeticSequential tests baseline sequential arithmetic JPEG.
-func TestDecoderArithmeticSequential(t *testing.T) {
+func tinyArithmeticJPEG(tableSelector byte) []byte {
 	var buf bytes.Buffer
 	buf.Write([]byte{0xFF, 0xD8})
 	buf.Write([]byte{0xFF, 0xDB})
@@ -229,14 +228,18 @@ func TestDecoderArithmeticSequential(t *testing.T) {
 	buf.Write([]byte{0x00, 0x08})
 	buf.WriteByte(0x01)
 	buf.WriteByte(0x01)
-	buf.WriteByte(0x00)
+	buf.WriteByte(tableSelector)
 	buf.WriteByte(0x00)
 	buf.WriteByte(0x3F)
 	buf.WriteByte(0x00)
 	buf.Write([]byte{0x00, 0x00})
 	buf.Write([]byte{0xFF, 0xD9})
+	return buf.Bytes()
+}
 
-	dec := New(bytes.NewReader(buf.Bytes()))
+// TestDecoderArithmeticSequential tests baseline sequential arithmetic JPEG.
+func TestDecoderArithmeticSequential(t *testing.T) {
+	dec := New(bytes.NewReader(tinyArithmeticJPEG(0x00)))
 	w, h, comps, _, err := dec.ReadHeader()
 	if err != nil {
 		t.Fatalf("ReadHeader arithmetic failed: %v", err)
@@ -265,6 +268,30 @@ func TestDecoderArithmeticSequential(t *testing.T) {
 	}
 	if err := dec.FinishDecompress(); err != nil {
 		t.Fatalf("FinishDecompress arithmetic failed: %v", err)
+	}
+}
+
+func TestDecoderArithmeticSequentialHighTableSelector(t *testing.T) {
+	dec := New(bytes.NewReader(tinyArithmeticJPEG(0xFF)))
+	if _, _, _, _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader arithmetic table 15 failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress arithmetic table 15 failed: %v", err)
+	}
+	row := make([]byte, dec.OutputWidth()*dec.OutputComponents())
+	for dec.OutputScanline() < dec.OutputHeight() {
+		if n, err := dec.ReadScanlines([][]byte{row}); err != nil || n != 1 {
+			t.Fatalf("ReadScanlines arithmetic table 15 n=%d err=%v, want 1 nil", n, err)
+		}
+		for i, sample := range row {
+			if sample != 128 {
+				t.Fatalf("arithmetic table 15 sample[%d] = %d, want 128", i, sample)
+			}
+		}
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress arithmetic table 15 failed: %v", err)
 	}
 }
 

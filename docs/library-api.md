@@ -751,8 +751,9 @@ _ = dec.ArithmeticConditioningTables()
 ```
 
 Arithmetic conditioning tables mirror libjpeg's `arith_dc_L`, `arith_dc_U`,
-and `arith_ac_K` arrays. Defaults are exposed even when the stream does not
-carry DAC markers, and DAC overrides are visible after header parsing.
+and `arith_ac_K` arrays for table selectors 0 through 15. Defaults are exposed
+even when the stream does not carry DAC markers, and DAC overrides are visible
+after header parsing.
 
 For table-only streams, call `ReadHeaderRequireImage(false)`. A
 `HeaderTablesOnly` status leaves the image config empty, but quantization and

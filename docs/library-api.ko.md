@@ -746,8 +746,9 @@ _ = dec.ArithmeticConditioningTables()
 ```
 
 Arithmetic conditioning table은 libjpeg의 `arith_dc_L`, `arith_dc_U`,
-`arith_ac_K` 배열에 대응합니다. Stream에 DAC marker가 없더라도 default 값을
-확인할 수 있고, DAC override는 header parsing 이후 반영됩니다.
+`arith_ac_K` 배열에 대응하며 table selector 0부터 15까지 지원합니다. Stream에
+DAC marker가 없더라도 default 값을 확인할 수 있고, DAC override는 header parsing
+이후 반영됩니다.
 
 Table-only stream에서는 `ReadHeaderRequireImage(false)`를 호출합니다.
 `HeaderTablesOnly` 상태에서는 image config는 비어 있지만, EOI 전에 parsing된
