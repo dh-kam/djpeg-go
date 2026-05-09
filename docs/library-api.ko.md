@@ -332,7 +332,7 @@ Generated RGB palette는 기본적으로 libjpeg 스타일의 image-derived two-
 선택을 사용합니다. `djpeg --onepass` 플래그와 같은 더 빠른 fixed color-cube
 경로가 필요하면 `WithQuantizationMode(libjpeg.QuantizationOnePass)`를 사용합니다.
 IJG libjpeg와 동일하게 generated RGB palette는 최소 8개 이상의 requested color가
-필요하며, external palette는 더 적은 entry를 가질 수 있습니다.
+필요하며, external palette는 하나 이상의 entry를 가질 수 있습니다.
 
 external colormap mode가 필요하면 palette를 직접 넘깁니다.
 

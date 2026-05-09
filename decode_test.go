@@ -282,6 +282,31 @@ func TestDecoderMutableColormapParameter(t *testing.T) {
 	}
 }
 
+func TestDecoderSingleColorExternalColormap(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("test fixture missing: %v", err)
+	}
+
+	raster, err := djpeg.DecodeRaster(
+		bytes.NewReader(data),
+		djpeg.WithColormap(color.Palette{color.Gray{Y: 0}}),
+		djpeg.WithDitherMode(djpeg.DitherNone),
+	)
+	if err != nil {
+		t.Fatalf("DecodeRaster single-color external colormap failed: %v", err)
+	}
+	if raster.Format != djpeg.PixelFormatIndexed8 || len(raster.Palette) != 1 {
+		t.Fatalf("single-color colormap raster format=%s palette=%d, want indexed8/1",
+			raster.Format, len(raster.Palette))
+	}
+	for i, idx := range raster.Pix {
+		if idx != 0 {
+			t.Fatalf("pixel %d index=%d, want 0 for single-color palette", i, idx)
+		}
+	}
+}
+
 func TestDecoderMutableRawAndBufferedParameters(t *testing.T) {
 	data, err := os.ReadFile("tests/testdata/color_16x16_420.jpg")
 	if err != nil {
@@ -336,8 +361,8 @@ func TestDecoderMutableRawAndBufferedParameters(t *testing.T) {
 	if err := invalid.SetDitherMode(djpeg.DitherMode(99)); !errors.Is(err, djpeg.ErrInvalidOption) {
 		t.Fatalf("SetDitherMode invalid error = %v, want ErrInvalidOption", err)
 	}
-	if err := invalid.SetColormap(color.Palette{color.Gray{Y: 0}}); !errors.Is(err, djpeg.ErrInvalidOption) {
-		t.Fatalf("SetColormap single-color error = %v, want ErrInvalidOption", err)
+	if err := invalid.SetColormap(color.Palette{color.Gray{Y: 0}}); err != nil {
+		t.Fatalf("SetColormap single-color failed: %v", err)
 	}
 }
 
@@ -1091,8 +1116,12 @@ func TestDecoderNewColormapInvalid(t *testing.T) {
 	if err := dec.NewColormap(color.Palette{}); !errors.Is(err, djpeg.ErrInvalidOption) {
 		t.Fatalf("NewColormap empty palette error = %v, want ErrInvalidOption", err)
 	}
-	if err := dec.NewColormap(color.Palette{color.Black}); !errors.Is(err, djpeg.ErrInvalidOption) {
-		t.Fatalf("NewColormap single-entry palette error = %v, want ErrInvalidOption", err)
+	if err := dec.NewColormap(color.Palette{color.Black}); err != nil {
+		t.Fatalf("NewColormap single-entry palette failed: %v", err)
+	}
+	if len(dec.Palette()) != 1 || dec.OutputConfig().ActualNumColors != 1 {
+		t.Fatalf("single-entry NewColormap palette length=%d actual=%d, want 1/1",
+			len(dec.Palette()), dec.OutputConfig().ActualNumColors)
 	}
 }
 

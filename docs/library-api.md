@@ -336,7 +336,7 @@ Generated RGB palettes use libjpeg-style two-pass, image-derived selection by
 default. Use `WithQuantizationMode(libjpeg.QuantizationOnePass)` to select the
 faster fixed color-cube path used by the `djpeg --onepass` flag.
 As in IJG libjpeg, generated RGB palettes require at least 8 requested colors;
-external palettes may contain fewer entries.
+external palettes may contain one or more entries.
 
 For external colormap mode, pass a palette explicitly:
 

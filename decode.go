@@ -1492,9 +1492,6 @@ func outputColormapFromPalette(palette color.Palette, format PixelFormat) (*inte
 	if len(palette) == 0 {
 		return nil, nil
 	}
-	if len(palette) < 2 {
-		return nil, fmt.Errorf("%w: colormap needs at least 2 colors", ErrInvalidOption)
-	}
 	if len(palette) > 256 {
 		return nil, fmt.Errorf("%w: colormap has %d colors, max is 256", ErrInvalidOption, len(palette))
 	}
@@ -1664,9 +1661,6 @@ func (d *Decoder) validateQuantizationOptions() error {
 	}
 	if len(d.opts.Colormap) > 256 {
 		return fmt.Errorf("%w: colormap has %d colors, max is 256", ErrInvalidOption, len(d.opts.Colormap))
-	}
-	if len(d.opts.Colormap) == 1 {
-		return fmt.Errorf("%w: colormap needs at least 2 colors", ErrInvalidOption)
 	}
 	if _, err := d.opts.DitherMode.outputDitherMode(); err != nil {
 		return err

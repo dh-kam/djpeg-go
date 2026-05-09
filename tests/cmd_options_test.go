@@ -480,6 +480,39 @@ func TestMapOptionUsesExternalPalette(t *testing.T) {
 	}
 }
 
+func TestMapOptionAllowsSingleColorPalette(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile("testdata/test_420.jpg")
+	if err != nil {
+		t.Skip("test_420.jpg not available:", err)
+	}
+
+	palettePath := t.TempDir() + "/palette.ppm"
+	palette := []byte("P6\n1 1\n255\n\x11\x22\x33")
+	if err := os.WriteFile(palettePath, palette, 0o600); err != nil {
+		t.Fatalf("writing palette: %v", err)
+	}
+
+	ppm := decompressForOptionTest(t, data, &djpegcli.Options{
+		Format:     output.FormatPPM,
+		MapFile:    palettePath,
+		DitherMode: "none",
+	})
+	_, _, _, components, pixels, err := parsePNMPixels(ppm)
+	if err != nil {
+		t.Fatalf("parsing mapped PPM output: %v", err)
+	}
+	if components != 3 {
+		t.Fatalf("components = %d, want RGB", components)
+	}
+	for i := 0; i < len(pixels); i += 3 {
+		if pixels[i] != 0x11 || pixels[i+1] != 0x22 || pixels[i+2] != 0x33 {
+			t.Fatalf("pixel %d = [%d %d %d], want single palette color", i/3, pixels[i], pixels[i+1], pixels[i+2])
+		}
+	}
+}
+
 func TestScaleOptionWritesScaledOutput(t *testing.T) {
 	t.Parallel()
 
