@@ -553,6 +553,42 @@ IJG compatibility를 위해 component ID가 Adobe APP14 transform hint보다
 추론합니다. 명시적인 `WithInputColorSpace`는 항상 이 marker 추론보다
 우선합니다.
 
+## Mutable Decoder Parameters
+
+`NewDecoder`는 C API lifecycle을 선호하는 호출자를 위해 libjpeg 스타일 setter도
+제공합니다. Header를 읽고 container metadata를 확인한 뒤,
+`StartDecompress` 전에 decompression parameter를 설정할 수 있습니다.
+
+```go
+dec := libjpeg.NewDecoder(r)
+header, err := dec.ReadHeader()
+if err != nil {
+	return err
+}
+
+if pdfColorSpaceIsRGB(header) {
+	if err := dec.SetInputColorSpace(libjpeg.InputRGB); err != nil {
+		return err
+	}
+}
+if err := dec.SetOutputColorSpace(libjpeg.ColorSpaceRGB); err != nil {
+	return err
+}
+if err := dec.SetCompatibility(libjpeg.CompatibilityPopplerPDF); err != nil {
+	return err
+}
+
+if err := dec.StartDecompress(); err != nil {
+	return err
+}
+```
+
+현재 mutable method는 `SetIDCT`, `SetUpsampling`, `SetCompatibility`,
+`SetChromaIDCTScaling`, `SetInputColorSpace`, `SetOutputColorSpace`,
+`SetColorTransform`, `SetScale`, `SetMaxMemory`입니다. 모두 `StartDecompress`
+전에 호출해야 하며, output이 시작된 뒤 변경하면 `ErrInvalidOption`을
+반환합니다.
+
 ## Header State
 
 `Config`에는 libjpeg field와 helper API에 대응하는 decompressor header state가
@@ -594,13 +630,17 @@ dec.Abort()
 Scanline decoder는 header를 읽는 동안 APPn 또는 COM marker payload를 저장할
 수 있습니다. 이는 libjpeg의 `jpeg_save_markers()` lifecycle과 같습니다.
 `ReadHeader` 전에 저장할 marker를 지정하고, 이후 `Markers()`로 확인합니다.
+Decoder 생성 시 `WithSavedMarkers`를 쓰거나, `ReadHeader` 전에
+`Decoder.SaveMarkers`를 호출할 수 있습니다.
 
 ```go
-dec := libjpeg.NewDecoder(
-	r,
-	libjpeg.WithSavedMarkers(libjpeg.MarkerAPP14, 65533),
-	libjpeg.WithSavedMarkers(libjpeg.MarkerCOM, 65533),
-)
+dec := libjpeg.NewDecoder(r)
+if err := dec.SaveMarkers(libjpeg.MarkerAPP14, 65533); err != nil {
+	return err
+}
+if err := dec.SaveMarkers(libjpeg.MarkerCOM, 65533); err != nil {
+	return err
+}
 
 if _, err := dec.ReadHeader(); err != nil {
 	return err

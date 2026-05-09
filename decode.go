@@ -829,6 +829,143 @@ func (d *Decoder) NewColormap(palette color.Palette) error {
 	return nil
 }
 
+// SetIDCT selects the inverse DCT method for subsequent output passes. It must
+// be called before StartDecompress.
+func (d *Decoder) SetIDCT(method IDCTMethod) error {
+	if err := d.ensureNotStarted("SetIDCT"); err != nil {
+		return err
+	}
+	if _, err := method.decoderName(); err != nil {
+		return err
+	}
+	d.opts.IDCT = method
+	return nil
+}
+
+// SetUpsampling selects chroma upsampling behavior for subsequent output
+// passes. It must be called before StartDecompress.
+func (d *Decoder) SetUpsampling(mode UpsamplingMode) error {
+	if err := d.ensureNotStarted("SetUpsampling"); err != nil {
+		return err
+	}
+	if _, err := mode.fancy(); err != nil {
+		return err
+	}
+	d.opts.Upsampling = mode
+	return nil
+}
+
+// SetCompatibility selects a decoder compatibility profile. It must be called
+// before StartDecompress.
+func (d *Decoder) SetCompatibility(mode CompatibilityMode) error {
+	if err := d.ensureNotStarted("SetCompatibility"); err != nil {
+		return err
+	}
+	if _, err := mode.chromaIDCTScaling(); err != nil {
+		return err
+	}
+	d.opts.Compatibility = mode
+	return nil
+}
+
+// SetChromaIDCTScaling overrides compatibility-profile chroma IDCT scaling. It
+// must be called before StartDecompress.
+func (d *Decoder) SetChromaIDCTScaling(enabled bool) error {
+	if err := d.ensureNotStarted("SetChromaIDCTScaling"); err != nil {
+		return err
+	}
+	if enabled {
+		d.opts.ChromaIDCTScaling = ChromaIDCTScalingEnabled
+	} else {
+		d.opts.ChromaIDCTScaling = ChromaIDCTScalingDisabled
+	}
+	return nil
+}
+
+// SetInputColorSpace overrides the JPEG sample color space inferred from
+// markers. It mirrors assigning jpeg_color_space after ReadHeader and before
+// StartDecompress.
+func (d *Decoder) SetInputColorSpace(space InputColorSpace) error {
+	if err := d.ensureNotStarted("SetInputColorSpace"); err != nil {
+		return err
+	}
+	if _, err := space.decoderName(); err != nil {
+		return err
+	}
+	d.opts.InputColorSpace = space
+	return nil
+}
+
+// SetOutputColorSpace forces decoded output pixels into a supported output
+// color space. It mirrors assigning out_color_space after ReadHeader and before
+// StartDecompress.
+func (d *Decoder) SetOutputColorSpace(space ColorSpace) error {
+	if err := d.ensureNotStarted("SetOutputColorSpace"); err != nil {
+		return err
+	}
+	if _, err := space.outputDecoderName(); err != nil {
+		return err
+	}
+	d.opts.OutputColorSpace = space
+	return nil
+}
+
+// SetColorTransform overrides the inverse color transform used for RGB-style
+// JPEG data. It must be called before StartDecompress.
+func (d *Decoder) SetColorTransform(transform ColorTransform) error {
+	if err := d.ensureNotStarted("SetColorTransform"); err != nil {
+		return err
+	}
+	if _, err := transform.decoderName(); err != nil {
+		return err
+	}
+	d.opts.ColorTransform = transform
+	return nil
+}
+
+// SetScale sets the facade output scaling ratio. Use 0/0 to reset to the
+// decoder default. It must be called before StartDecompress.
+func (d *Decoder) SetScale(numerator, denominator int) error {
+	if err := d.ensureNotStarted("SetScale"); err != nil {
+		return err
+	}
+	next := d.opts
+	next.ScaleNumerator = numerator
+	next.ScaleDenominator = denominator
+	if _, _, err := next.scaleSize(); err != nil {
+		return err
+	}
+	d.opts = next
+	return nil
+}
+
+// SetMaxMemory sets an approximate upper bound, in bytes, for decoder-owned
+// buffers. It must be called before StartDecompress.
+func (d *Decoder) SetMaxMemory(bytes int64) error {
+	if err := d.ensureNotStarted("SetMaxMemory"); err != nil {
+		return err
+	}
+	if bytes < 0 {
+		return fmt.Errorf("%w: max memory must be non-negative", ErrInvalidOption)
+	}
+	d.opts.MaxMemoryBytes = bytes
+	return nil
+}
+
+// SaveMarkers configures APPn or COM marker retention before ReadHeader. It
+// mirrors libjpeg's jpeg_save_markers API at the facade level.
+func (d *Decoder) SaveMarkers(markerCode int, lengthLimit uint) error {
+	option := SavedMarkerOption{Code: markerCode, LengthLimit: lengthLimit}
+	if !validSavedMarkerCode(option.Code) {
+		return fmt.Errorf("%w: marker code 0x%02x cannot be saved", ErrInvalidOption, option.Code)
+	}
+	if err := d.dec.SaveMarkers(option.Code, option.LengthLimit); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidOption, err)
+	}
+	d.opts.SavedMarkers = append(d.opts.SavedMarkers, option)
+	return nil
+}
+
 // SetMarkerProcessor configures APPn or COM marker callback processing before
 // ReadHeader. It mirrors libjpeg's jpeg_set_marker_processor API at the facade
 // level.
@@ -967,6 +1104,13 @@ func (d *Decoder) IsProgressive() bool {
 // IsArithmetic reports whether the JPEG uses arithmetic entropy coding.
 func (d *Decoder) IsArithmetic() bool {
 	return d.dec.IsArithmetic()
+}
+
+func (d *Decoder) ensureNotStarted(name string) error {
+	if d.started {
+		return fmt.Errorf("%w: %s must be called before StartDecompress", ErrInvalidOption, name)
+	}
+	return nil
 }
 
 func (d *Decoder) reportProgress(counter, limit int) {

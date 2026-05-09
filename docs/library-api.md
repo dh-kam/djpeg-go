@@ -558,6 +558,42 @@ infers CMYK for four-component streams, while transform `2` and unknown
 four-component transform values infer YCCK. Explicit `WithInputColorSpace`
 always overrides that marker inference.
 
+## Mutable Decoder Parameters
+
+`NewDecoder` also exposes libjpeg-style setter methods for callers that prefer
+the C API lifecycle: read the header, inspect container metadata, then set
+decompression parameters before `StartDecompress`.
+
+```go
+dec := libjpeg.NewDecoder(r)
+header, err := dec.ReadHeader()
+if err != nil {
+	return err
+}
+
+if pdfColorSpaceIsRGB(header) {
+	if err := dec.SetInputColorSpace(libjpeg.InputRGB); err != nil {
+		return err
+	}
+}
+if err := dec.SetOutputColorSpace(libjpeg.ColorSpaceRGB); err != nil {
+	return err
+}
+if err := dec.SetCompatibility(libjpeg.CompatibilityPopplerPDF); err != nil {
+	return err
+}
+
+if err := dec.StartDecompress(); err != nil {
+	return err
+}
+```
+
+The mutable methods currently include `SetIDCT`, `SetUpsampling`,
+`SetCompatibility`, `SetChromaIDCTScaling`, `SetInputColorSpace`,
+`SetOutputColorSpace`, `SetColorTransform`, `SetScale`, and `SetMaxMemory`.
+They must be called before `StartDecompress`; changing these parameters after
+output starts returns `ErrInvalidOption`.
+
 ## Header State
 
 `Config` includes decompressor header state that maps to libjpeg fields and
@@ -599,14 +635,18 @@ dec.Abort()
 
 The scanline decoder can retain APPn or COM marker payloads while reading the
 header. This mirrors libjpeg's `jpeg_save_markers()` lifecycle: configure marker
-retention before `ReadHeader`, then inspect `Markers()`.
+retention before `ReadHeader`, then inspect `Markers()`. Use either
+`WithSavedMarkers` when constructing the decoder or `Decoder.SaveMarkers` before
+`ReadHeader`.
 
 ```go
-dec := libjpeg.NewDecoder(
-	r,
-	libjpeg.WithSavedMarkers(libjpeg.MarkerAPP14, 65533),
-	libjpeg.WithSavedMarkers(libjpeg.MarkerCOM, 65533),
-)
+dec := libjpeg.NewDecoder(r)
+if err := dec.SaveMarkers(libjpeg.MarkerAPP14, 65533); err != nil {
+	return err
+}
+if err := dec.SaveMarkers(libjpeg.MarkerCOM, 65533); err != nil {
+	return err
+}
 
 if _, err := dec.ReadHeader(); err != nil {
 	return err

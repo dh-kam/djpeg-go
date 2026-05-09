@@ -108,6 +108,74 @@ func TestNewDecoderPublicScanlineAPI(t *testing.T) {
 	}
 }
 
+func TestDecoderMutableDecompressionParameters(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/color_8x8_444.jpg")
+	if err != nil {
+		t.Skipf("test fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	header, err := dec.ReadHeader()
+	if err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	if header.PixelFormat != djpeg.PixelFormatRGB24 {
+		t.Fatalf("header pixel format = %s, want rgb24", header.PixelFormat)
+	}
+
+	if err := dec.SetIDCT(djpeg.IDCTFast); err != nil {
+		t.Fatalf("SetIDCT failed: %v", err)
+	}
+	if err := dec.SetUpsampling(djpeg.UpsamplingNearest); err != nil {
+		t.Fatalf("SetUpsampling failed: %v", err)
+	}
+	if err := dec.SetCompatibility(djpeg.CompatibilityPopplerPDF); err != nil {
+		t.Fatalf("SetCompatibility failed: %v", err)
+	}
+	if err := dec.SetChromaIDCTScaling(false); err != nil {
+		t.Fatalf("SetChromaIDCTScaling failed: %v", err)
+	}
+	if err := dec.SetOutputColorSpace(djpeg.ColorSpaceGray); err != nil {
+		t.Fatalf("SetOutputColorSpace failed: %v", err)
+	}
+	if err := dec.SetScale(1, 2); err != nil {
+		t.Fatalf("SetScale failed: %v", err)
+	}
+	if err := dec.SetMaxMemory(0); err != nil {
+		t.Fatalf("SetMaxMemory failed: %v", err)
+	}
+
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress failed: %v", err)
+	}
+	out := dec.OutputConfig()
+	if out.PixelFormat != djpeg.PixelFormatGray8 || out.Width != 4 || out.Height != 4 || out.Stride != 4 {
+		t.Fatalf("output config = %+v, want 4x4 gray8", out)
+	}
+
+	row := make([]byte, out.Stride)
+	rows := 0
+	for rows < out.Height {
+		n, err := dec.ReadScanlines([][]byte{row})
+		if err != nil {
+			t.Fatalf("ReadScanlines failed: %v", err)
+		}
+		if n == 0 {
+			break
+		}
+		rows += n
+	}
+	if rows != out.Height {
+		t.Fatalf("read rows = %d, want %d", rows, out.Height)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress failed: %v", err)
+	}
+	if err := dec.SetOutputColorSpace(djpeg.ColorSpaceRGB); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("SetOutputColorSpace after start error = %v, want ErrInvalidOption", err)
+	}
+}
+
 func TestDecodeRasterTurboFancyMatchesPopplerFixture(t *testing.T) {
 	jpegData, err := os.ReadFile("tests/testdata/pdf-reader-geotopo-p76-rgb-mismatch/input-geotopo-p76-rgb.jpg")
 	if err != nil {
@@ -558,6 +626,29 @@ func TestDecoderSavedMarkers(t *testing.T) {
 	again := dec.Markers()
 	if !bytes.HasPrefix(again[0].Data, []byte("Adobe")) {
 		t.Fatal("Markers returned aliased marker data")
+	}
+}
+
+func TestDecoderSaveMarkersMethod(t *testing.T) {
+	data, err := base64.StdEncoding.DecodeString(tinyCMYKJPEGBase64)
+	if err != nil {
+		t.Fatalf("decode embedded CMYK JPEG: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	if err := dec.SaveMarkers(djpeg.MarkerAPP14, 65533); err != nil {
+		t.Fatalf("SaveMarkers failed: %v", err)
+	}
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	markers := dec.Markers()
+	if len(markers) != 1 || markers[0].Code != djpeg.MarkerAPP14 || !bytes.HasPrefix(markers[0].Data, []byte("Adobe")) {
+		t.Fatalf("markers = %+v, want saved Adobe APP14", markers)
+	}
+
+	if err := djpeg.NewDecoder(bytes.NewReader(nil)).SaveMarkers(0xd8, 10); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("SaveMarkers invalid marker error = %v, want ErrInvalidOption", err)
 	}
 }
 
