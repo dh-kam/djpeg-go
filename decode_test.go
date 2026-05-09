@@ -361,6 +361,9 @@ func TestDecoderMutableRawAndBufferedParameters(t *testing.T) {
 	if err := invalid.SetDitherMode(djpeg.DitherMode(99)); !errors.Is(err, djpeg.ErrInvalidOption) {
 		t.Fatalf("SetDitherMode invalid error = %v, want ErrInvalidOption", err)
 	}
+	if err := invalid.SetColormap(color.Palette{}); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("SetColormap empty error = %v, want ErrInvalidOption", err)
+	}
 	if err := invalid.SetColormap(color.Palette{color.Gray{Y: 0}}); err != nil {
 		t.Fatalf("SetColormap single-color failed: %v", err)
 	}
@@ -1252,6 +1255,9 @@ func TestDecodeRasterQuantizedInvalidOptions(t *testing.T) {
 	}
 	if _, err := djpeg.DecodeRasterConfig(bytes.NewReader(data), djpeg.WithQuantizeColors(1)); !errors.Is(err, djpeg.ErrInvalidOption) {
 		t.Fatalf("DecodeRasterConfig WithQuantizeColors(1) error = %v, want ErrInvalidOption", err)
+	}
+	if _, err := djpeg.DecodeRaster(bytes.NewReader(data), djpeg.WithColormap(color.Palette{})); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("DecodeRaster WithColormap(empty) error = %v, want ErrInvalidOption", err)
 	}
 	colorData, err := os.ReadFile("tests/testdata/color_8x8_444.jpg")
 	if err != nil {

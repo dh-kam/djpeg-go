@@ -1064,7 +1064,7 @@ func (d *Decoder) SetColormap(palette color.Palette) error {
 	}
 	next := d.opts
 	next.QuantizeColors = true
-	next.Colormap = append(color.Palette(nil), palette...)
+	next.Colormap = clonePalette(palette)
 	if err := d.validateOptionsCandidate(next); err != nil {
 		return err
 	}
@@ -1489,8 +1489,11 @@ func outputColorSpaceForRaster(format PixelFormat) (internaloutput.ColorSpace, e
 }
 
 func outputColormapFromPalette(palette color.Palette, format PixelFormat) (*internaloutput.Colormap, error) {
-	if len(palette) == 0 {
+	if palette == nil {
 		return nil, nil
+	}
+	if len(palette) == 0 {
+		return nil, fmt.Errorf("%w: colormap must not be empty", ErrInvalidOption)
 	}
 	if len(palette) > 256 {
 		return nil, fmt.Errorf("%w: colormap has %d colors, max is 256", ErrInvalidOption, len(palette))
@@ -1640,7 +1643,7 @@ func (d *Decoder) applyScaleToConfig(cfg *Config) error {
 }
 
 func (d *Decoder) quantizationRequested() bool {
-	return d.opts.QuantizeColors || len(d.opts.Colormap) > 0
+	return d.opts.QuantizeColors || d.opts.Colormap != nil
 }
 
 func (d *Decoder) validateQuantizationOptions() error {
@@ -1661,6 +1664,9 @@ func (d *Decoder) validateQuantizationOptions() error {
 	}
 	if len(d.opts.Colormap) > 256 {
 		return fmt.Errorf("%w: colormap has %d colors, max is 256", ErrInvalidOption, len(d.opts.Colormap))
+	}
+	if d.opts.Colormap != nil && len(d.opts.Colormap) == 0 {
+		return fmt.Errorf("%w: colormap must not be empty", ErrInvalidOption)
 	}
 	if _, err := d.opts.DitherMode.outputDitherMode(); err != nil {
 		return err

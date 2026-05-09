@@ -325,8 +325,14 @@ func WithQuantizationMode(mode QuantizationMode) Option {
 func WithColormap(palette color.Palette) Option {
 	return func(opts *Options) {
 		opts.QuantizeColors = true
-		opts.Colormap = append(color.Palette(nil), palette...)
+		opts.Colormap = clonePalette(palette)
 	}
+}
+
+func clonePalette(palette color.Palette) color.Palette {
+	out := make(color.Palette, len(palette))
+	copy(out, palette)
+	return out
 }
 
 // WithRawDataOutput requests libjpeg-style raw_data_out mode. Use
