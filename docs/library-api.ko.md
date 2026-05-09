@@ -246,14 +246,19 @@ libjpeg.WithBlockSmoothing(false)
 `--fast` subset, 즉 fast integer IDCT와 nearest-neighbor chroma upsampling에
 대응합니다.
 
-libjpeg 스타일 `--grayscale` 또는 `--rgb` 동작이 필요하면 output color space를
-강제할 수 있습니다.
+libjpeg 스타일 `--grayscale` 또는 `--rgb` 동작이 필요하거나 YCbCr sample처럼
+libjpeg null-conversion output이 필요하면 output color space를 강제할 수 있습니다.
 
 ```go
 raster, err := libjpeg.DecodeRaster(r, libjpeg.WithOutputColorSpace(libjpeg.ColorSpaceGray))
 // 동등한 표현:
 raster, err = libjpeg.DecodeRaster(r, libjpeg.WithGrayscaleOutput())
+
+ycbcr, err := libjpeg.DecodeRaster(r, libjpeg.WithOutputColorSpace(libjpeg.ColorSpaceYCbCr))
 ```
+
+YCbCr 및 big-gamut YCbCr output은 JPEG input color space가 요청한 output color
+space와 일치할 때만 지원합니다.
 
 `WithMaxMemory`는 decoder가 소유한 compressed scan data와 component buffer에
 대략적인 상한을 적용합니다. CLI 스타일 값은 `libjpeg.ParseMemoryLimit("20m")`로

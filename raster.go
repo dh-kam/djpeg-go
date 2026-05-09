@@ -12,6 +12,8 @@ const (
 	PixelFormatUnknown PixelFormat = iota
 	PixelFormatGray8
 	PixelFormatRGB24
+	PixelFormatYCbCr24
+	PixelFormatBigGamutYCbCr24
 	PixelFormatCMYK32
 	PixelFormatYCCK32
 	PixelFormatIndexed8
@@ -22,7 +24,7 @@ func (f PixelFormat) Channels() int {
 	switch f {
 	case PixelFormatGray8, PixelFormatIndexed8:
 		return 1
-	case PixelFormatRGB24:
+	case PixelFormatRGB24, PixelFormatYCbCr24, PixelFormatBigGamutYCbCr24:
 		return 3
 	case PixelFormatCMYK32, PixelFormatYCCK32:
 		return 4
@@ -37,6 +39,10 @@ func (f PixelFormat) String() string {
 		return "gray8"
 	case PixelFormatRGB24:
 		return "rgb24"
+	case PixelFormatYCbCr24:
+		return "ycbcr24"
+	case PixelFormatBigGamutYCbCr24:
+		return "big-gamut-ycbcr24"
 	case PixelFormatCMYK32:
 		return "cmyk32"
 	case PixelFormatYCCK32:
@@ -157,6 +163,12 @@ func (r *Raster) At(x, y int) color.Color {
 		return color.Gray{Y: r.Pix[i]}
 	case PixelFormatRGB24:
 		return color.RGBA{R: r.Pix[i], G: r.Pix[i+1], B: r.Pix[i+2], A: 0xff}
+	case PixelFormatYCbCr24:
+		rr, gg, bb := color.YCbCrToRGB(r.Pix[i], r.Pix[i+1], r.Pix[i+2])
+		return color.RGBA{R: rr, G: gg, B: bb, A: 0xff}
+	case PixelFormatBigGamutYCbCr24:
+		rr, gg, bb := bigGamutYCbCrToRGB(r.Pix[i], r.Pix[i+1], r.Pix[i+2])
+		return color.RGBA{R: rr, G: gg, B: bb, A: 0xff}
 	case PixelFormatCMYK32:
 		return color.CMYK{C: r.Pix[i], M: r.Pix[i+1], Y: r.Pix[i+2], K: r.Pix[i+3]}
 	case PixelFormatYCCK32:
@@ -217,6 +229,21 @@ func (r *Raster) RGBA() *image.RGBA {
 				dst[d+3] = 0xff
 			}
 		}
+	case PixelFormatYCbCr24, PixelFormatBigGamutYCbCr24:
+		for y := 0; y < height; y++ {
+			src := r.Pix[y*r.Stride : y*r.Stride+width*3]
+			dst := out.Pix[y*out.Stride : y*out.Stride+width*4]
+			for x := 0; x < width; x++ {
+				s := x * 3
+				d := x * 4
+				if r.Format == PixelFormatBigGamutYCbCr24 {
+					dst[d], dst[d+1], dst[d+2] = bigGamutYCbCrToRGB(src[s], src[s+1], src[s+2])
+				} else {
+					dst[d], dst[d+1], dst[d+2] = color.YCbCrToRGB(src[s], src[s+1], src[s+2])
+				}
+				dst[d+3] = 0xff
+			}
+		}
 	case PixelFormatCMYK32, PixelFormatYCCK32:
 		for y := 0; y < height; y++ {
 			src := r.Pix[y*r.Stride : y*r.Stride+width*4]
@@ -249,6 +276,16 @@ func yccToCMY(y, cb, cr byte) (byte, byte, byte) {
 	g := clampByte(yy - ((22554*(cbb-128) + 46802*(crr-128)) >> 16))
 	b := clampByte(yy + ((116130 * (cbb - 128)) >> 16))
 	return 255 - r, 255 - g, 255 - b
+}
+
+func bigGamutYCbCrToRGB(y, cb, cr byte) (byte, byte, byte) {
+	yy := int(y)
+	cbb := int(cb) - 128
+	crr := int(cr) - 128
+	r := yy + ((91882*crr + 32768) >> 15) // round(2.804 * Cr)
+	g := yy - ((46720*crr + 22553*cbb + 16384) >> 15)
+	b := yy + ((116130*cbb + 32768) >> 15) // round(3.544 * Cb)
+	return clampByte(r), clampByte(g), clampByte(b)
 }
 
 func clampByte(v int) byte {

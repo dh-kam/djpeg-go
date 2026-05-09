@@ -520,12 +520,16 @@ func ParseOutputColorSpace(s string) (ColorSpace, error) {
 		return ColorSpaceGray, nil
 	case "rgb":
 		return ColorSpaceRGB, nil
+	case "ycbcr", "ycc":
+		return ColorSpaceYCbCr, nil
 	case "cmyk":
 		return ColorSpaceCMYK, nil
 	case "ycck":
 		return ColorSpaceYCCK, nil
 	case "bgrgb", "bg-rgb", "big-gamut-rgb":
 		return ColorSpaceBigGamutRGB, nil
+	case "bgycc", "bg-ycc", "bgycbcr", "bg-ycbcr", "big-gamut-ycc", "big-gamut-ycbcr":
+		return ColorSpaceBigGamutYCbCr, nil
 	default:
 		return ColorSpaceUnknown, fmt.Errorf("%w: unknown output color space %q", ErrInvalidOption, s)
 	}
@@ -556,12 +560,16 @@ func (c ColorSpace) outputDecoderName() (string, error) {
 		return "gray", nil
 	case ColorSpaceRGB:
 		return "rgb", nil
+	case ColorSpaceYCbCr:
+		return "ycbcr", nil
 	case ColorSpaceCMYK:
 		return "cmyk", nil
 	case ColorSpaceYCCK:
 		return "ycck", nil
 	case ColorSpaceBigGamutRGB:
 		return "big-gamut-rgb", nil
+	case ColorSpaceBigGamutYCbCr:
+		return "big-gamut-ycbcr", nil
 	default:
 		return "", fmt.Errorf("%w: output color space %s is not supported", ErrUnsupported, c)
 	}

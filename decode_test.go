@@ -2594,9 +2594,11 @@ func TestParseColorSpaces(t *testing.T) {
 	}{
 		{input: "gray", want: djpeg.ColorSpaceGray},
 		{input: "rgb", want: djpeg.ColorSpaceRGB},
+		{input: "ycbcr", want: djpeg.ColorSpaceYCbCr},
 		{input: "cmyk", want: djpeg.ColorSpaceCMYK},
 		{input: "ycck", want: djpeg.ColorSpaceYCCK},
 		{input: "big-gamut-rgb", want: djpeg.ColorSpaceBigGamutRGB},
+		{input: "bg-ycc", want: djpeg.ColorSpaceBigGamutYCbCr},
 	}
 	for _, tt := range outputTests {
 		got, err := djpeg.ParseOutputColorSpace(tt.input)
@@ -2606,6 +2608,36 @@ func TestParseColorSpaces(t *testing.T) {
 		if got != tt.want {
 			t.Fatalf("ParseOutputColorSpace(%q) = %s, want %s", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestYCbCrOutputColorSpace(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/color_16x16_420.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	cfg, err := djpeg.DecodeRasterConfig(bytes.NewReader(data), djpeg.WithOutputColorSpace(djpeg.ColorSpaceYCbCr))
+	if err != nil {
+		t.Fatalf("DecodeRasterConfig ycbcr output failed: %v", err)
+	}
+	if cfg.InputColorSpace != djpeg.ColorSpaceYCbCr || cfg.ColorSpace != djpeg.ColorSpaceYCbCr ||
+		cfg.PixelFormat != djpeg.PixelFormatYCbCr24 || cfg.Components != 3 {
+		t.Fatalf("ycbcr config = input %s output %s format %s components %d, want ycbcr/ycbcr/ycbcr24/3",
+			cfg.InputColorSpace, cfg.ColorSpace, cfg.PixelFormat, cfg.Components)
+	}
+
+	raster, err := djpeg.DecodeRaster(bytes.NewReader(data), djpeg.WithOutputColorSpace(djpeg.ColorSpaceYCbCr))
+	if err != nil {
+		t.Fatalf("DecodeRaster ycbcr output failed: %v", err)
+	}
+	if raster.Format != djpeg.PixelFormatYCbCr24 || raster.Stride != raster.Rect.Dx()*3 {
+		t.Fatalf("ycbcr raster format/stride = %s/%d, want ycbcr24/%d",
+			raster.Format, raster.Stride, raster.Rect.Dx()*3)
+	}
+
+	if _, err := djpeg.DecodeRasterConfig(bytes.NewReader(data), djpeg.WithOutputColorSpace(djpeg.ColorSpaceBigGamutYCbCr)); !errors.Is(err, djpeg.ErrUnsupported) {
+		t.Fatalf("DecodeRasterConfig ycbcr->big-gamut-ycbcr error = %v, want ErrUnsupported", err)
 	}
 }
 
@@ -2634,6 +2666,33 @@ func TestBigGamutRGBComponentIDs(t *testing.T) {
 	}
 	if raster.Format != djpeg.PixelFormatRGB24 || raster.Stride != raster.Rect.Dx()*3 {
 		t.Fatalf("big-gamut raster format/stride = %s/%d, want rgb24/%d",
+			raster.Format, raster.Stride, raster.Rect.Dx()*3)
+	}
+}
+
+func TestBigGamutYCbCrOutputColorSpace(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/color_16x16_420.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+	data = rewriteJPEGComponentIDs(t, data, []byte{1, 0x22, 0x23})
+
+	cfg, err := djpeg.DecodeRasterConfig(bytes.NewReader(data), djpeg.WithOutputColorSpace(djpeg.ColorSpaceBigGamutYCbCr))
+	if err != nil {
+		t.Fatalf("DecodeRasterConfig big-gamut ycbcr failed: %v", err)
+	}
+	if cfg.InputColorSpace != djpeg.ColorSpaceBigGamutYCbCr || cfg.ColorSpace != djpeg.ColorSpaceBigGamutYCbCr ||
+		cfg.PixelFormat != djpeg.PixelFormatBigGamutYCbCr24 || cfg.Components != 3 {
+		t.Fatalf("big-gamut ycbcr config = input %s output %s format %s components %d, want big-gamut-ycbcr/big-gamut-ycbcr/big-gamut-ycbcr24/3",
+			cfg.InputColorSpace, cfg.ColorSpace, cfg.PixelFormat, cfg.Components)
+	}
+
+	raster, err := djpeg.DecodeRaster(bytes.NewReader(data), djpeg.WithOutputColorSpace(djpeg.ColorSpaceBigGamutYCbCr))
+	if err != nil {
+		t.Fatalf("DecodeRaster big-gamut ycbcr failed: %v", err)
+	}
+	if raster.Format != djpeg.PixelFormatBigGamutYCbCr24 || raster.Stride != raster.Rect.Dx()*3 {
+		t.Fatalf("big-gamut ycbcr raster format/stride = %s/%d, want big-gamut-ycbcr24/%d",
 			raster.Format, raster.Stride, raster.Rect.Dx()*3)
 	}
 }

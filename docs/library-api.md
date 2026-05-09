@@ -250,13 +250,19 @@ implemented subset of CLI `--fast`: fast integer IDCT plus nearest-neighbor
 chroma upsampling.
 
 Force an output color space when callers need libjpeg-style `--grayscale` or
-`--rgb` behavior:
+`--rgb` behavior, or when they need a libjpeg null-conversion output such as
+YCbCr samples:
 
 ```go
 raster, err := libjpeg.DecodeRaster(r, libjpeg.WithOutputColorSpace(libjpeg.ColorSpaceGray))
 // Equivalent:
 raster, err = libjpeg.DecodeRaster(r, libjpeg.WithGrayscaleOutput())
+
+ycbcr, err := libjpeg.DecodeRaster(r, libjpeg.WithOutputColorSpace(libjpeg.ColorSpaceYCbCr))
 ```
+
+YCbCr and big-gamut YCbCr output are supported only when the JPEG input color
+space matches the requested output color space.
 
 `WithMaxMemory` applies an approximate upper bound to decoder-owned compressed
 scan data and component buffers. CLI-style values can be parsed with

@@ -231,12 +231,16 @@ func (dec *Decoder) SetOutputColorSpace(space string) error {
 		cs = marker.CSGrayScale
 	case "rgb":
 		cs = marker.CSRGB
+	case "ycbcr", "ycc":
+		cs = marker.CSYCbCr
 	case "cmyk":
 		cs = marker.CSCMYK
 	case "ycck":
 		cs = marker.CSYCCK
 	case "bgrgb", "bg-rgb", "big-gamut-rgb":
 		cs = marker.CSBGRGB
+	case "bgycc", "bg-ycc", "bgycbcr", "bg-ycbcr", "big-gamut-ycc", "big-gamut-ycbcr":
+		cs = marker.CSBGYCC
 	default:
 		return errors.New("jpeg: unsupported output colorspace")
 	}
@@ -936,6 +940,13 @@ func (dec *Decoder) FinishDecompress() error {
 
 func (dec *Decoder) validateColorConversion() error {
 	d := dec.d
+	if d.NumComponents == 3 {
+		if validThreeComponentConversion(d.JPEGColorSpace, d.OutColorSpace) {
+			return nil
+		}
+		return fmt.Errorf("%w: unsupported 3-component conversion from %v to %v",
+			ErrUnsupportedJPEG, d.JPEGColorSpace, d.OutColorSpace)
+	}
 	if d.NumComponents != 4 {
 		return nil
 	}
@@ -955,6 +966,23 @@ func (dec *Decoder) validateColorConversion() error {
 	}
 	return fmt.Errorf("%w: unsupported 4-component conversion from %v to %v",
 		ErrUnsupportedJPEG, d.JPEGColorSpace, d.OutColorSpace)
+}
+
+func validThreeComponentConversion(input, output marker.ColorSpace) bool {
+	switch output {
+	case marker.CSGrayScale:
+		return input == marker.CSYCbCr || input == marker.CSBGYCC || input == marker.CSRGB
+	case marker.CSRGB:
+		return input == marker.CSYCbCr || input == marker.CSBGYCC || input == marker.CSRGB
+	case marker.CSYCbCr:
+		return input == marker.CSYCbCr
+	case marker.CSBGRGB:
+		return input == marker.CSBGRGB
+	case marker.CSBGYCC:
+		return input == marker.CSBGYCC
+	default:
+		return false
+	}
 }
 
 func (dec *Decoder) readAllScanData() error {
@@ -1152,6 +1180,11 @@ func (dec *Decoder) upsampleAndConvert(outputRow []byte) {
 	if (d.JPEGColorSpace == marker.CSRGB && d.OutColorSpace == marker.CSRGB ||
 		d.JPEGColorSpace == marker.CSBGRGB && d.OutColorSpace == marker.CSBGRGB) && d.NumComponents >= 3 {
 		dec.upsampleRGB(outputRow)
+		return
+	}
+	if (d.JPEGColorSpace == marker.CSYCbCr && d.OutColorSpace == marker.CSYCbCr ||
+		d.JPEGColorSpace == marker.CSBGYCC && d.OutColorSpace == marker.CSBGYCC) && d.NumComponents >= 3 {
+		dec.upsampleThreeComponents(outputRow)
 		return
 	}
 
@@ -1566,6 +1599,31 @@ func (dec *Decoder) upsampleRGB(outputRow []byte) {
 	}
 }
 
+func (dec *Decoder) upsampleThreeComponents(outputRow []byte) {
+	outputWidth := dec.d.OutputWidth
+	if cap(dec.vRRow) < outputWidth {
+		dec.vRRow = make([]int, outputWidth)
+	}
+	if cap(dec.vCbRow) < outputWidth {
+		dec.vCbRow = make([]int, outputWidth)
+	}
+	if cap(dec.vCrRow) < outputWidth {
+		dec.vCrRow = make([]int, outputWidth)
+	}
+	c0 := dec.vRRow[:outputWidth]
+	c1 := dec.vCbRow[:outputWidth]
+	c2 := dec.vCrRow[:outputWidth]
+	dec.upsampleComponentToInt(0, dec.rowGroupCtr, c0)
+	dec.upsampleComponentToInt(1, dec.rowGroupCtr, c1)
+	dec.upsampleComponentToInt(2, dec.rowGroupCtr, c2)
+	for col := 0; col < outputWidth; col++ {
+		idx := col * 3
+		outputRow[idx] = byte(c0[col])
+		outputRow[idx+1] = byte(c1[col])
+		outputRow[idx+2] = byte(c2[col])
+	}
+}
+
 func (dec *Decoder) upsampleComponentToInt(componentIndex, outputRow int, dst []int) {
 	d := dec.d
 	comp := &d.CompInfo[componentIndex]
@@ -1929,8 +1987,12 @@ func (dec *Decoder) setupColorPipeline() error {
 		info.OutColorSpace = color.JCS_GRAYSCALE
 	case marker.CSRGB:
 		info.OutColorSpace = color.JCS_RGB
+	case marker.CSYCbCr:
+		info.OutColorSpace = color.JCS_YCbCr
 	case marker.CSBGRGB:
 		info.OutColorSpace = color.JCS_BG_RGB
+	case marker.CSBGYCC:
+		info.OutColorSpace = color.JCS_BG_YCC
 	case marker.CSCMYK:
 		info.OutColorSpace = color.JCS_CMYK
 	case marker.CSYCCK:

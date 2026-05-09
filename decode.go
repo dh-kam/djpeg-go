@@ -1569,6 +1569,13 @@ func (d *Decoder) applyOutputColorSpaceToConfig(cfg *Config) error {
 	case ColorSpaceRGB:
 		cfg.PixelFormat = PixelFormatRGB24
 		cfg.ColorSpace = ColorSpaceRGB
+	case ColorSpaceYCbCr:
+		if cfg.InputColorSpace != ColorSpaceYCbCr {
+			return fmt.Errorf("%w: output color space %s requires %s input, got %s",
+				ErrUnsupported, d.opts.OutputColorSpace, ColorSpaceYCbCr, cfg.InputColorSpace)
+		}
+		cfg.PixelFormat = PixelFormatYCbCr24
+		cfg.ColorSpace = ColorSpaceYCbCr
 	case ColorSpaceCMYK:
 		cfg.PixelFormat = PixelFormatCMYK32
 		cfg.ColorSpace = ColorSpaceCMYK
@@ -1576,8 +1583,19 @@ func (d *Decoder) applyOutputColorSpaceToConfig(cfg *Config) error {
 		cfg.PixelFormat = PixelFormatYCCK32
 		cfg.ColorSpace = ColorSpaceYCCK
 	case ColorSpaceBigGamutRGB:
+		if cfg.InputColorSpace != ColorSpaceBigGamutRGB {
+			return fmt.Errorf("%w: output color space %s requires %s input, got %s",
+				ErrUnsupported, d.opts.OutputColorSpace, ColorSpaceBigGamutRGB, cfg.InputColorSpace)
+		}
 		cfg.PixelFormat = PixelFormatRGB24
 		cfg.ColorSpace = ColorSpaceBigGamutRGB
+	case ColorSpaceBigGamutYCbCr:
+		if cfg.InputColorSpace != ColorSpaceBigGamutYCbCr {
+			return fmt.Errorf("%w: output color space %s requires %s input, got %s",
+				ErrUnsupported, d.opts.OutputColorSpace, ColorSpaceBigGamutYCbCr, cfg.InputColorSpace)
+		}
+		cfg.PixelFormat = PixelFormatBigGamutYCbCr24
+		cfg.ColorSpace = ColorSpaceBigGamutYCbCr
 	default:
 		return fmt.Errorf("%w: output color space %s is not supported", ErrUnsupported, d.opts.OutputColorSpace)
 	}
@@ -1794,6 +1812,12 @@ func configFromOutput(dec *internaldecoder.Decoder) Config {
 	if dec.OutputComponents() == 1 || dec.OutColorSpace() == marker.CSGrayScale {
 		pixelFormat = PixelFormatGray8
 		colorSpace = ColorSpaceGray
+	} else if dec.OutColorSpace() == marker.CSYCbCr {
+		pixelFormat = PixelFormatYCbCr24
+		colorSpace = ColorSpaceYCbCr
+	} else if dec.OutColorSpace() == marker.CSBGYCC {
+		pixelFormat = PixelFormatBigGamutYCbCr24
+		colorSpace = ColorSpaceBigGamutYCbCr
 	} else if dec.OutputComponents() == 4 || dec.OutColorSpace() == marker.CSCMYK || dec.OutColorSpace() == marker.CSYCCK {
 		if dec.OutColorSpace() == marker.CSYCCK {
 			pixelFormat = PixelFormatYCCK32
