@@ -108,6 +108,10 @@ func readPPMColormap(br *bufio.Reader) (*Colormap, error) {
 		return nil, fmt.Errorf("PPM maxval %d not supported (only 255)", maxval)
 	}
 
+	if err := skipPBMWhitespaceAndComments(br); err != nil {
+		return nil, err
+	}
+
 	// Collect unique colors
 	colorSet := make(map[[3]uint8]bool)
 	var mapR, mapG, mapB []uint8
@@ -203,6 +207,25 @@ func readPBMInteger(br *bufio.Reader) (int, error) {
 		return 0, fmt.Errorf("expected integer in PPM header")
 	}
 	return strconv.Atoi(digits.String())
+}
+
+func skipPBMWhitespaceAndComments(br *bufio.Reader) error {
+	for {
+		b, err := br.ReadByte()
+		if err != nil {
+			return err
+		}
+		if b == '#' {
+			if _, err := br.ReadString('\n'); err != nil && err != io.EOF {
+				return err
+			}
+			continue
+		}
+		if b == ' ' || b == '\t' || b == '\n' || b == '\r' {
+			continue
+		}
+		return br.UnreadByte()
+	}
 }
 
 // scanPPMValue reads one integer value from a text PPM scanner.

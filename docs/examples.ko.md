@@ -12,7 +12,7 @@ make build
 다른 Go 모듈에서 JPEG 데이터를 디코딩하려면 root 모듈을 import합니다.
 
 ```go
-import djpeg "github.com/dh-kam/djpeg-go"
+import libjpeg "github.com/dh-kam/djpeg-go"
 ```
 
 Go image 생태계와 함께 쓰려면 `image.Image`로 디코딩합니다.
@@ -24,7 +24,7 @@ if err != nil {
 }
 defer in.Close()
 
-img, err := djpeg.Decode(in)
+img, err := libjpeg.Decode(in)
 if err != nil {
 	return err
 }
@@ -35,29 +35,28 @@ return png.Encode(out, img)
 Gray8 또는 RGB24 byte layout이 필요하면 raw pixel로 디코딩합니다.
 
 ```go
-raster, err := djpeg.DecodeRaster(
+raster, err := libjpeg.DecodeRaster(
 	in,
-	djpeg.WithIDCT(djpeg.IDCTInt),
+	libjpeg.WithIDCT(libjpeg.IDCTInt),
 )
 if err != nil {
 	return err
 }
 
 switch raster.Format {
-case djpeg.PixelFormatGray8:
+case libjpeg.PixelFormatGray8:
 	useGray(raster.Pix, raster.Rect.Dx(), raster.Rect.Dy(), raster.Stride)
-case djpeg.PixelFormatRGB24:
+case libjpeg.PixelFormatRGB24:
 	useRGB(raster.Pix, raster.Rect.Dx(), raster.Rect.Dy(), raster.Stride)
 }
 ```
 
-Go 코드에서 Poppler/ImageMagick 호환 chroma 경로를 사용:
+Go 코드에서 Poppler/ImageMagick 호환 decompressor preset을 사용:
 
 ```go
-raster, err := djpeg.DecodeRaster(
+raster, err := libjpeg.DecodeRaster(
 	in,
-	djpeg.WithIDCT(djpeg.IDCTInt),
-	djpeg.WithTurboFancy(),
+	libjpeg.WithCompatibility(libjpeg.CompatibilityPopplerPDF),
 )
 ```
 
@@ -75,6 +74,18 @@ JPEG를 binary PPM 또는 PGM으로 디코딩:
 ```
 
 RGB 이미지는 PPM(`P6`)으로, grayscale 이미지는 PGM(`P5`)으로 출력됩니다.
+
+Color JPEG를 grayscale output으로 강제:
+
+```bash
+./dist/djpeg-linux-amd64-debug --grayscale --ppm input.jpg > output.pgm
+```
+
+Grayscale JPEG를 RGB output으로 강제:
+
+```bash
+./dist/djpeg-linux-amd64-debug --rgb --ppm grayscale-input.jpg > output.ppm
+```
 
 출력 파일명을 직접 지정:
 
@@ -102,6 +113,14 @@ integer IDCT 경로 사용. IJG 9f와의 exact parity 테스트에 사용하는 
 ./dist/djpeg-linux-amd64-debug --dct fast --ppm input.jpg > output.ppm
 ```
 
+libjpeg 호환 fast shorthand 사용. 현재 decoder에서는 `--dct fast --nosmooth`로
+동작하며, IJG `-fast`의 color quantization 관련 동작은 quantization 지원과 함께
+추가할 예정입니다.
+
+```bash
+./dist/djpeg-linux-amd64-debug --fast --ppm input.jpg > output.ppm
+```
+
 floating-point IDCT variant 사용:
 
 ```bash
@@ -127,6 +146,62 @@ fancy upsampling 비활성화:
 현재 random100 exact-100 parity 측정에는 default 모드와 `--nosmooth` 모드가
 모두 포함됩니다.
 
+## Memory Limit
+
+Decoder가 소유하는 buffer의 대략적인 상한을 설정합니다.
+
+```bash
+./dist/djpeg-linux-amd64-debug --maxmemory 20m --ppm input.jpg > output.ppm
+```
+
+libjpeg와 같이 suffix 없는 숫자는 kilobyte로 해석하고, `m`/`M`은 megabyte로
+해석합니다. 이 제한은 compressed scan buffer와 decoded component buffer에
+적용되며, caller가 소유한 output file 또는 shell redirection buffer에는 적용되지
+않습니다.
+
+## Scaling
+
+libjpeg 스타일 `M/N` fraction으로 output을 scaling합니다.
+
+```bash
+./dist/djpeg-linux-amd64-debug --scale 1/2 --ppm input.jpg > half.ppm
+```
+
+8x8 DCT JPEG에서는 ratio가 `1/8`부터 `16/8`까지의 지원 scale grid 중 가까운
+값으로 매핑됩니다. 현재 구현은 먼저 decode한 뒤 output raster를 resampling하므로
+dimension은 libjpeg scale grid를 따르지만, pixel 값까지 scaled-IDCT exact를
+목표로 하지는 않습니다.
+
+## Color Quantization
+
+RGB output을 생성된 palette로 줄입니다.
+
+```bash
+./dist/djpeg-linux-amd64-debug --colors 216 --ppm input.jpg > quantized.ppm
+```
+
+Quantized output의 dithering mode를 선택합니다.
+
+```bash
+./dist/djpeg-linux-amd64-debug --colors 216 --dither ordered --ppm input.jpg > quantized.ppm
+```
+
+지원하는 dither mode는 `fs`, `ordered`, `none`입니다. `--onepass`는 libjpeg CLI
+호환성을 위해 허용합니다. 현재 generated palette 경로는 deterministic one-pass
+color-cube quantizer입니다.
+
+GIF 또는 PPM 파일에서 external palette를 사용합니다.
+
+```bash
+./dist/djpeg-linux-amd64-debug --map palette.ppm --ppm input.jpg > mapped.ppm
+```
+
+RGB GIF output은 최대 256색 quantization을 자동으로 활성화합니다.
+
+```bash
+./dist/djpeg-linux-amd64-debug --gif --outfile output.gif input.jpg
+```
+
 ## Poppler/ImageMagick 호환 4:2:0 출력
 
 일부 PDF image stream은 IJG 9f chroma IDCT scaling 대신 libjpeg-turbo 방식의
@@ -134,8 +209,10 @@ fancy upsampling 비활성화:
 일치합니다.
 
 ```bash
-./dist/djpeg-linux-amd64-debug --turbo-fancy --ppm input.jpg > output.ppm
+./dist/djpeg-linux-amd64-debug --compatibility poppler-pdf --ppm input.jpg > output.ppm
 ```
+
+`--turbo-fancy`는 이 profile의 deprecated alias로 유지합니다.
 
 ## 다른 출력 포맷
 
@@ -229,18 +306,5 @@ scripts/perf_compare.py \
 ```
 
 최신 보고서는 [performance.md](performance.md)에 있습니다.
-
-## 미지원 또는 미완성 옵션
-
-일부 `djpeg` 스타일 flag는 CLI 호환성을 위해 parsing하지만 아직 완전히 구현되지
-않았습니다.
-
-- `--grayscale`
-- `--rgb`
-- `--fast`
-- `--onepass`
-- `--dither`
-- `--scale`
-- `--maxmemory`
 
 Arithmetic-coded JPEG와 progressive JPEG는 현재 decoder에서 거부합니다.

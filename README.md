@@ -1,8 +1,10 @@
 # djpeg-go
 
-`djpeg-go` is a Pure Go port of the JPEG decompression path from the
-Independent JPEG Group's JPEG software. The current reference upstream is
-IJG libjpeg 9f, released on 14-Jan-2024.
+`djpeg-go` is a Pure Go port of the JPEG decompressor path from the
+Independent JPEG Group's JPEG software. The library goal is a libjpeg-compatible
+decompressor API; the `cmd/djpeg` binary is a CLI compatibility and debug tool
+built on top of that API. The current reference upstream is IJG libjpeg 9f,
+released on 14-Jan-2024.
 
 The decoder is implemented in Go and does not link to libjpeg at runtime. The
 local `jpeg-9f/` tree is kept as an upstream reference for parity and
@@ -81,7 +83,7 @@ import (
 	"image/png"
 	"os"
 
-	djpeg "github.com/dh-kam/djpeg-go"
+	libjpeg "github.com/dh-kam/djpeg-go"
 )
 
 func main() {
@@ -91,7 +93,7 @@ func main() {
 	}
 	defer in.Close()
 
-	img, err := djpeg.Decode(in)
+	img, err := libjpeg.Decode(in)
 	if err != nil {
 		panic(err)
 	}
@@ -111,12 +113,19 @@ func main() {
 Use raw pixels when exact byte layout matters:
 
 ```go
-raster, err := djpeg.DecodeRaster(input, djpeg.WithIDCT(djpeg.IDCTInt))
+raster, err := libjpeg.DecodeRaster(
+	input,
+	libjpeg.WithCompatibility(libjpeg.CompatibilityPopplerPDF),
+)
 if err != nil {
 	return err
 }
 // raster.Pix is top-down Gray8 or RGB24 data with raster.Stride bytes per row.
 ```
+
+The import path still reflects the current repository name. The examples alias
+the root package as `libjpeg` because the public API is the Poppler/go-pdf
+integration surface; `djpeg` parity remains a regression test and CLI frontend.
 
 Decode a JPEG to raw binary PPM/PGM:
 
@@ -133,8 +142,11 @@ Disable fancy upsampling:
 Match Poppler/ImageMagick-style output for PDF 4:2:0 DCT streams:
 
 ```bash
-./dist/djpeg-linux-amd64-debug --turbo-fancy --ppm input.jpg > output.ppm
+./dist/djpeg-linux-amd64-debug --compatibility poppler-pdf --ppm input.jpg > output.ppm
 ```
+
+The older `--turbo-fancy` flag remains as a deprecated alias for that
+compatibility profile.
 
 Write to a file:
 

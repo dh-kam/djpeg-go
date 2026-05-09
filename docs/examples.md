@@ -12,7 +12,7 @@ make build
 Import the root module when another Go module needs to decode JPEG data:
 
 ```go
-import djpeg "github.com/dh-kam/djpeg-go"
+import libjpeg "github.com/dh-kam/djpeg-go"
 ```
 
 Decode to an `image.Image` for use with the Go image ecosystem:
@@ -24,7 +24,7 @@ if err != nil {
 }
 defer in.Close()
 
-img, err := djpeg.Decode(in)
+img, err := libjpeg.Decode(in)
 if err != nil {
 	return err
 }
@@ -35,29 +35,28 @@ return png.Encode(out, img)
 Decode to raw pixels when you need stable Gray8 or RGB24 byte layout:
 
 ```go
-raster, err := djpeg.DecodeRaster(
+raster, err := libjpeg.DecodeRaster(
 	in,
-	djpeg.WithIDCT(djpeg.IDCTInt),
+	libjpeg.WithIDCT(libjpeg.IDCTInt),
 )
 if err != nil {
 	return err
 }
 
 switch raster.Format {
-case djpeg.PixelFormatGray8:
+case libjpeg.PixelFormatGray8:
 	useGray(raster.Pix, raster.Rect.Dx(), raster.Rect.Dy(), raster.Stride)
-case djpeg.PixelFormatRGB24:
+case libjpeg.PixelFormatRGB24:
 	useRGB(raster.Pix, raster.Rect.Dx(), raster.Rect.Dy(), raster.Stride)
 }
 ```
 
-Use the Poppler/ImageMagick-compatible chroma path from Go:
+Use the Poppler/ImageMagick-compatible decompressor preset from Go:
 
 ```go
-raster, err := djpeg.DecodeRaster(
+raster, err := libjpeg.DecodeRaster(
 	in,
-	djpeg.WithIDCT(djpeg.IDCTInt),
-	djpeg.WithTurboFancy(),
+	libjpeg.WithCompatibility(libjpeg.CompatibilityPopplerPDF),
 )
 ```
 
@@ -75,6 +74,18 @@ Decode a JPEG to binary PPM or PGM:
 ```
 
 The output is PPM (`P6`) for RGB images and PGM (`P5`) for grayscale images.
+
+Force grayscale output from a color JPEG:
+
+```bash
+./dist/djpeg-linux-amd64-debug --grayscale --ppm input.jpg > output.pgm
+```
+
+Force RGB output from a grayscale JPEG:
+
+```bash
+./dist/djpeg-linux-amd64-debug --rgb --ppm grayscale-input.jpg > output.ppm
+```
 
 Write the decoded image to a named file:
 
@@ -103,6 +114,14 @@ Use the faster integer IDCT variant:
 ./dist/djpeg-linux-amd64-debug --dct fast --ppm input.jpg > output.ppm
 ```
 
+Use the libjpeg-compatible fast shorthand. In the current decoder this maps to
+`--dct fast --nosmooth`; the color-quantization side of IJG `-fast` will be
+added when quantization support lands.
+
+```bash
+./dist/djpeg-linux-amd64-debug --fast --ppm input.jpg > output.ppm
+```
+
 Use the floating-point IDCT variant:
 
 ```bash
@@ -128,6 +147,61 @@ Disable fancy upsampling:
 Both default and `--nosmooth` modes are included in the current exact-100
 random100 parity run.
 
+## Memory Limit
+
+Set an approximate upper bound for decoder-owned buffers:
+
+```bash
+./dist/djpeg-linux-amd64-debug --maxmemory 20m --ppm input.jpg > output.ppm
+```
+
+As in libjpeg, a bare number is interpreted as kilobytes and `m`/`M` means
+megabytes. The limit applies to the decoder's compressed scan buffer and decoded
+component buffers, not to caller-owned output files or shell redirection.
+
+## Scaling
+
+Scale output by a libjpeg-style `M/N` fraction:
+
+```bash
+./dist/djpeg-linux-amd64-debug --scale 1/2 --ppm input.jpg > half.ppm
+```
+
+For 8x8 DCT JPEGs, ratios map to the closest supported scale size from `1/8`
+through `16/8`. The current implementation decodes first and then resamples the
+output raster, so dimensions follow libjpeg's scale grid but pixels are not
+intended to be scaled-IDCT exact.
+
+## Color Quantization
+
+Reduce RGB output to a generated palette:
+
+```bash
+./dist/djpeg-linux-amd64-debug --colors 216 --ppm input.jpg > quantized.ppm
+```
+
+Select a dithering mode for quantized output:
+
+```bash
+./dist/djpeg-linux-amd64-debug --colors 216 --dither ordered --ppm input.jpg > quantized.ppm
+```
+
+Supported dither modes are `fs`, `ordered`, and `none`. `--onepass` is accepted
+for libjpeg CLI compatibility; the current generated palette path is already a
+deterministic one-pass color-cube quantizer.
+
+Use an external palette from a GIF or PPM file:
+
+```bash
+./dist/djpeg-linux-amd64-debug --map palette.ppm --ppm input.jpg > mapped.ppm
+```
+
+RGB GIF output automatically enables quantization to at most 256 colors:
+
+```bash
+./dist/djpeg-linux-amd64-debug --gif --outfile output.gif input.jpg
+```
+
 ## Poppler/ImageMagick-Compatible 4:2:0 Output
 
 Some PDF image streams match Poppler/ImageMagick output when libjpeg-turbo-style
@@ -135,8 +209,10 @@ Some PDF image streams match Poppler/ImageMagick output when libjpeg-turbo-style
 scaling:
 
 ```bash
-./dist/djpeg-linux-amd64-debug --turbo-fancy --ppm input.jpg > output.ppm
+./dist/djpeg-linux-amd64-debug --compatibility poppler-pdf --ppm input.jpg > output.ppm
 ```
+
+`--turbo-fancy` is retained as a deprecated alias for this profile.
 
 ## Other Output Formats
 
@@ -230,19 +306,6 @@ scripts/perf_compare.py \
 ```
 
 The latest report is in [performance.md](performance.md).
-
-## Unsupported or Incomplete Options
-
-Some `djpeg`-style flags are parsed for CLI compatibility but are not fully
-implemented yet:
-
-- `--grayscale`
-- `--rgb`
-- `--fast`
-- `--onepass`
-- `--dither`
-- `--scale`
-- `--maxmemory`
 
 Arithmetic-coded and progressive JPEG files are currently rejected by the
 decoder.

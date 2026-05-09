@@ -12,6 +12,8 @@ const (
 	PixelFormatUnknown PixelFormat = iota
 	PixelFormatGray8
 	PixelFormatRGB24
+	PixelFormatCMYK32
+	PixelFormatYCCK32
 )
 
 // Channels returns the number of bytes per pixel.
@@ -21,6 +23,8 @@ func (f PixelFormat) Channels() int {
 		return 1
 	case PixelFormatRGB24:
 		return 3
+	case PixelFormatCMYK32, PixelFormatYCCK32:
+		return 4
 	default:
 		return 0
 	}
@@ -32,6 +36,10 @@ func (f PixelFormat) String() string {
 		return "gray8"
 	case PixelFormatRGB24:
 		return "rgb24"
+	case PixelFormatCMYK32:
+		return "cmyk32"
+	case PixelFormatYCCK32:
+		return "ycck32"
 	default:
 		return "unknown"
 	}
@@ -116,6 +124,8 @@ func (r *Raster) ColorModel() color.Model {
 	switch r.Format {
 	case PixelFormatGray8:
 		return color.GrayModel
+	case PixelFormatCMYK32:
+		return color.CMYKModel
 	default:
 		return color.RGBAModel
 	}
@@ -132,6 +142,11 @@ func (r *Raster) At(x, y int) color.Color {
 		return color.Gray{Y: r.Pix[i]}
 	case PixelFormatRGB24:
 		return color.RGBA{R: r.Pix[i], G: r.Pix[i+1], B: r.Pix[i+2], A: 0xff}
+	case PixelFormatCMYK32:
+		return color.CMYK{C: r.Pix[i], M: r.Pix[i+1], Y: r.Pix[i+2], K: r.Pix[i+3]}
+	case PixelFormatYCCK32:
+		c, m, yy := yccToCMY(r.Pix[i], r.Pix[i+1], r.Pix[i+2])
+		return color.CMYK{C: c, M: m, Y: yy, K: r.Pix[i+3]}
 	default:
 		return color.RGBA{}
 	}
@@ -171,6 +186,72 @@ func (r *Raster) RGBA() *image.RGBA {
 				dst[d+3] = 0xff
 			}
 		}
+	case PixelFormatCMYK32, PixelFormatYCCK32:
+		for y := 0; y < height; y++ {
+			src := r.Pix[y*r.Stride : y*r.Stride+width*4]
+			dst := out.Pix[y*out.Stride : y*out.Stride+width*4]
+			for x := 0; x < width; x++ {
+				s := x * 4
+				c := src[s]
+				m := src[s+1]
+				yy := src[s+2]
+				if r.Format == PixelFormatYCCK32 {
+					c, m, yy = yccToCMY(src[s], src[s+1], src[s+2])
+				}
+				red, green, blue, _ := color.CMYK{C: c, M: m, Y: yy, K: src[s+3]}.RGBA()
+				d := x * 4
+				dst[d] = byte(red >> 8)
+				dst[d+1] = byte(green >> 8)
+				dst[d+2] = byte(blue >> 8)
+				dst[d+3] = 0xff
+			}
+		}
 	}
 	return out
+}
+
+func yccToCMY(y, cb, cr byte) (byte, byte, byte) {
+	yy := int(y)
+	cbb := int(cb)
+	crr := int(cr)
+	r := clampByte(yy + ((91881 * (crr - 128)) >> 16))
+	g := clampByte(yy - ((22554*(cbb-128) + 46802*(crr-128)) >> 16))
+	b := clampByte(yy + ((116130 * (cbb - 128)) >> 16))
+	return 255 - r, 255 - g, 255 - b
+}
+
+func clampByte(v int) byte {
+	if v < 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
+	return byte(v)
+}
+
+func scaleRasterNearest(src *Raster, width, height int) (*Raster, error) {
+	if src == nil {
+		return nil, nil
+	}
+	if width == src.Rect.Dx() && height == src.Rect.Dy() {
+		return src, nil
+	}
+	dst := NewRaster(width, height, src.Format)
+	if dst.Format == PixelFormatUnknown {
+		return nil, ErrInvalidOption
+	}
+	srcWidth := src.Rect.Dx()
+	srcHeight := src.Rect.Dy()
+	channels := src.Format.Channels()
+	for y := 0; y < height; y++ {
+		srcY := y * srcHeight / height
+		srcRow := src.Pix[srcY*src.Stride : srcY*src.Stride+srcWidth*channels]
+		dstRow := dst.Pix[y*dst.Stride : y*dst.Stride+width*channels]
+		for x := 0; x < width; x++ {
+			srcX := x * srcWidth / width
+			copy(dstRow[x*channels:(x+1)*channels], srcRow[srcX*channels:(srcX+1)*channels])
+		}
+	}
+	return dst, nil
 }

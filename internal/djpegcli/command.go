@@ -7,8 +7,6 @@ import (
 	"io"
 	"os"
 	"runtime/pprof"
-	"strconv"
-	"strings"
 
 	djpeg "github.com/dh-kam/djpeg-go"
 	"github.com/dh-kam/djpeg-go/internal/output"
@@ -39,8 +37,10 @@ type Options struct {
 	MapFile         string `flag:"map" usage:"Map to colors from a GIF/PPM file"`
 	MaxMemory       string `flag:"maxmemory" usage:"Maximum memory (KB or MB with m)"`
 	Scale           string `flag:"scale" usage:"Scale output image by fraction M/N"`
-	InputColorSpace string `flag:"input-colorspace" usage:"Interpret JPEG samples as auto, rgb, ycbcr, or grayscale"`
-	TurboFancy      bool   `flag:"turbo-fancy" usage:"Use 8x8 IDCT plus fancy upsampling instead of IJG 9f chroma IDCT scaling"`
+	InputColorSpace string `flag:"input-colorspace" usage:"Interpret JPEG samples as auto, grayscale, rgb, ycbcr, cmyk, or ycck"`
+	ColorTransform  string `flag:"color-transform" usage:"Inverse color transform: auto, none, subtract-green"`
+	Compatibility   string `flag:"compatibility" usage:"Compatibility profile: default, ijg9, poppler-pdf"`
+	TurboFancy      bool   `flag:"turbo-fancy" usage:"Deprecated alias for --compatibility poppler-pdf"`
 	CPUProfile      string `flag:"cpuprofile" usage:"Write CPU profile to FILE"`
 
 	FmtPPM   bool `flag:"ppm" usage:"Output PPM/PGM format"`
@@ -75,8 +75,10 @@ func NewRootCommand() *cobra.Command {
 		String("map", "", "Map to colors from a GIF/PPM file").
 		String("maxmemory", "", "Maximum memory (KB or MB with m)").
 		String("scale", "", "Scale output image by fraction M/N").
-		String("input-colorspace", "auto", "Interpret JPEG samples as auto, rgb, ycbcr, or grayscale").
-		Bool("turbo-fancy", false, "Use 8x8 IDCT plus fancy upsampling instead of IJG 9f chroma IDCT scaling").
+		String("input-colorspace", "auto", "Interpret JPEG samples as auto, grayscale, rgb, ycbcr, cmyk, or ycck").
+		String("color-transform", "auto", "Inverse color transform: auto, none, subtract-green").
+		String("compatibility", "default", "Compatibility profile: default, ijg9, poppler-pdf").
+		Bool("turbo-fancy", false, "Deprecated alias for --compatibility poppler-pdf").
 		String("cpuprofile", "", "Write CPU profile to FILE").
 		Bool("ppm", false, "Output PPM/PGM format").
 		Bool("bmp", false, "Output BMP format").
@@ -210,29 +212,12 @@ func startCPUProfile(path string) (func(), error) {
 	}, nil
 }
 
-func parseMaxMemory(s string) int64 {
-	if s == "" {
-		return 0
-	}
-	s = strings.ToLower(s)
-	var mult int64 = 1024 // Default is KB in standard libjpeg unless 'm' suffix
-	if strings.HasSuffix(s, "m") {
-		mult = 1024 * 1024
-		s = strings.TrimSuffix(s, "m")
-	} else if strings.HasSuffix(s, "k") {
-		mult = 1024
-		s = strings.TrimSuffix(s, "k")
-	}
-	val, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return 0
-	}
-	return val * mult
-}
-
 // Decompress reads a JPEG from input and writes the decoded image to out
 // in the requested format.
 func Decompress(input io.Reader, out io.Writer, opts *Options) error {
+	if err := validateUnsupportedOptions(opts); err != nil {
+		return err
+	}
 	decodeOptions, err := decoderOptions(opts)
 	if err != nil {
 		return err
@@ -266,21 +251,6 @@ func Decompress(input io.Reader, out io.Writer, opts *Options) error {
 		return fmt.Errorf("reading JPEG header: %w", err)
 	}
 
-	// Apply user-specified overrides (must be after ReadHeader)
-	if opts.MaxMemory != "" {
-		limit := parseMaxMemory(opts.MaxMemory)
-		if limit > 0 {
-			// dec.SetMaxMemory(limit)
-		}
-	}
-
-	if opts.Grayscale {
-		// Force grayscale output by setting out color space
-	}
-	if opts.ForceRGB {
-		// Force RGB output
-	}
-
 	// Start decompression (sets up pipeline)
 	if err := dec.Start(); err != nil {
 		return fmt.Errorf("starting decompression: %w", err)
@@ -292,9 +262,14 @@ func Decompress(input io.Reader, out io.Writer, opts *Options) error {
 	outputComponents := outputConfig.Components
 
 	// Build output image info
-	colorSpace := output.ColorSpaceRGB
-	if outputConfig.PixelFormat == djpeg.PixelFormatGray8 {
+	var colorSpace output.ColorSpace
+	switch outputConfig.PixelFormat {
+	case djpeg.PixelFormatGray8:
 		colorSpace = output.ColorSpaceGrayscale
+	case djpeg.PixelFormatRGB24:
+		colorSpace = output.ColorSpaceRGB
+	default:
+		return fmt.Errorf("%w: cmd/djpeg output writers do not support %s pixels yet", djpeg.ErrUnsupported, outputConfig.PixelFormat)
 	}
 
 	info := &output.ImageInfo{
@@ -305,14 +280,9 @@ func Decompress(input io.Reader, out io.Writer, opts *Options) error {
 		DataPrecision: 8,
 	}
 
-	if opts.NumColors > 0 {
-		info.QuantizeColors = true
-		info.DesiredColors = opts.NumColors
-	}
-	if colormap != nil {
-		info.QuantizeColors = true
-		info.Colormap = colormap
-		info.DesiredColors = colormap.NumColors
+	quantizeOptions, err := prepareQuantization(opts, info, colormap)
+	if err != nil {
+		return err
 	}
 
 	if opts.Verbose {
@@ -329,9 +299,33 @@ func Decompress(input io.Reader, out io.Writer, opts *Options) error {
 		}
 	}
 
-	// For GIF with RGB, force quantization check
-	if opts.Format == output.FormatGIF && info.ColorSpace == output.ColorSpaceRGB && !info.QuantizeColors {
-		return fmt.Errorf("GIF format requires color quantization for RGB images; use -colors N")
+	if info.QuantizeColors {
+		rows, err := readDecodedRows(dec, outputHeight, outputWidth*outputComponents)
+		if err != nil {
+			return err
+		}
+		if err := dec.Finish(); err != nil {
+			return fmt.Errorf("finishing decompression: %w", err)
+		}
+		indexRows, qmap, err := output.QuantizeRows(rows, info, quantizeOptions)
+		if err != nil {
+			return fmt.Errorf("quantizing output: %w", err)
+		}
+		info.Colormap = qmap
+		info.DesiredColors = qmap.NumColors
+
+		if err := w.Start(out, info); err != nil {
+			return fmt.Errorf("starting output: %w", err)
+		}
+		for y, row := range indexRows {
+			if err := w.WriteScanline(row); err != nil {
+				return fmt.Errorf("writing scanline %d: %w", y, err)
+			}
+		}
+		if err := w.Finish(); err != nil {
+			return fmt.Errorf("finishing output: %w", err)
+		}
+		return nil
 	}
 
 	// Start the output writer
@@ -367,11 +361,116 @@ func Decompress(input io.Reader, out io.Writer, opts *Options) error {
 	return nil
 }
 
+func prepareQuantization(opts *Options, info *output.ImageInfo, colormap *output.Colormap) (output.QuantizeOptions, error) {
+	dither, err := output.ParseDitherMode(opts.DitherMode)
+	if err != nil {
+		return output.QuantizeOptions{}, fmt.Errorf("%w: %v", djpeg.ErrInvalidOption, err)
+	}
+
+	desiredColors := opts.NumColors
+	quantize := desiredColors > 0 || colormap != nil
+	if opts.Format == output.FormatGIF && info.ColorSpace == output.ColorSpaceRGB {
+		quantize = true
+		if desiredColors == 0 && colormap == nil {
+			desiredColors = 256
+			if opts.Fast {
+				desiredColors = 216
+			}
+		}
+	}
+	if opts.Fast && quantize && desiredColors == 0 && colormap == nil {
+		desiredColors = 216
+	}
+	if dither == output.DitherDefault && opts.Fast && quantize {
+		dither = output.DitherOrdered
+	}
+
+	if quantize {
+		info.QuantizeColors = true
+		info.DesiredColors = desiredColors
+		info.Colormap = colormap
+		if colormap != nil {
+			info.DesiredColors = colormap.NumColors
+		}
+	}
+
+	return output.QuantizeOptions{
+		DesiredColors: desiredColors,
+		Colormap:      colormap,
+		Dither:        dither,
+	}, nil
+}
+
+func readDecodedRows(dec *djpeg.Decoder, outputHeight, rowStride int) ([][]byte, error) {
+	rows := make([][]byte, 0, outputHeight)
+	scanline := make([]byte, rowStride)
+	for y := 0; y < outputHeight; y++ {
+		n, err := dec.ReadScanlines([][]byte{scanline})
+		if err != nil {
+			return nil, fmt.Errorf("reading scanline %d: %w", y, err)
+		}
+		if n == 0 {
+			break
+		}
+		row := make([]byte, rowStride)
+		copy(row, scanline)
+		rows = append(rows, row)
+	}
+	if len(rows) != outputHeight {
+		return nil, fmt.Errorf("decoded %d scanlines, want %d", len(rows), outputHeight)
+	}
+	return rows, nil
+}
+
+func validateUnsupportedOptions(opts *Options) error {
+	if opts == nil {
+		return nil
+	}
+	switch {
+	case opts.Grayscale && opts.ForceRGB:
+		return fmt.Errorf("%w: --grayscale and --rgb cannot be used together", djpeg.ErrInvalidOption)
+	case opts.NumColors < 0:
+		return fmt.Errorf("%w: --colors must be non-negative", djpeg.ErrInvalidOption)
+	default:
+		return nil
+	}
+}
+
 func decoderOptions(opts *Options) ([]djpeg.Option, error) {
 	if opts == nil {
 		return nil, nil
 	}
 	decodeOptions := make([]djpeg.Option, 0, 4)
+	if opts.Fast {
+		decodeOptions = append(decodeOptions, djpeg.WithFast())
+	}
+	if opts.Compatibility != "" {
+		mode, err := djpeg.ParseCompatibilityMode(opts.Compatibility)
+		if err != nil {
+			return nil, err
+		}
+		decodeOptions = append(decodeOptions, djpeg.WithCompatibility(mode))
+	}
+	if opts.Grayscale {
+		decodeOptions = append(decodeOptions, djpeg.WithGrayscaleOutput())
+	}
+	if opts.ForceRGB {
+		decodeOptions = append(decodeOptions, djpeg.WithRGBOutput())
+	}
+	if opts.MaxMemory != "" {
+		limit, err := djpeg.ParseMemoryLimit(opts.MaxMemory)
+		if err != nil {
+			return nil, err
+		}
+		decodeOptions = append(decodeOptions, djpeg.WithMaxMemory(limit))
+	}
+	if opts.Scale != "" {
+		numerator, denominator, err := djpeg.ParseScale(opts.Scale)
+		if err != nil {
+			return nil, err
+		}
+		decodeOptions = append(decodeOptions, djpeg.WithScale(numerator, denominator))
+	}
 	if opts.DctMethod != "" {
 		method, err := djpeg.ParseIDCTMethod(opts.DctMethod)
 		if err != nil {
@@ -391,6 +490,13 @@ func decoderOptions(opts *Options) ([]djpeg.Option, error) {
 			return nil, err
 		}
 		decodeOptions = append(decodeOptions, djpeg.WithInputColorSpace(space))
+	}
+	if opts.ColorTransform != "" {
+		transform, err := djpeg.ParseColorTransform(opts.ColorTransform)
+		if err != nil {
+			return nil, err
+		}
+		decodeOptions = append(decodeOptions, djpeg.WithColorTransform(transform))
 	}
 	return decodeOptions, nil
 }

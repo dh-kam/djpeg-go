@@ -22,18 +22,19 @@ type rleWriter struct {
 	info    *ImageInfo
 	rows    [][]byte // buffered rows (top-down)
 	rowIdx  int
+	indexed bool
 }
 
 const (
-	rleMagic    = "rle\x95" // RLE magic number (0x95 = 149 decimal version)
-	rleOpSkip   = 1         // skip lines
-	rleOpColor  = 2         // set color channel
-	rleOpDump   = 3         // dump pixels
-	rleOpRun    = 4         // run of same pixel
-	rleOpEOF    = 5         // end of file
-	rleNop      = 6         // no-op
-	rleComment  = 7         // comment
-	rleBgColor  = 8         // background color (optional)
+	rleMagic   = "rle\x95" // RLE magic number (0x95 = 149 decimal version)
+	rleOpSkip  = 1         // skip lines
+	rleOpColor = 2         // set color channel
+	rleOpDump  = 3         // dump pixels
+	rleOpRun   = 4         // run of same pixel
+	rleOpEOF   = 5         // end of file
+	rleNop     = 6         // no-op
+	rleComment = 7         // comment
+	rleBgColor = 8         // background color (optional)
 )
 
 // Start initializes the RLE writer and validates the image can be stored.
@@ -51,8 +52,11 @@ func (r *rleWriter) Start(w io.Writer, info *ImageInfo) error {
 		return fmt.Errorf("rle: unsupported number of components (%d)", info.NumComponents)
 	}
 
-	// Allocate row buffers
 	rowBytes := info.Width * info.NumComponents
+	r.indexed = info.QuantizeColors && info.Colormap != nil
+	if r.indexed {
+		rowBytes = info.Width
+	}
 	r.rows = make([][]byte, info.Height)
 	for i := range r.rows {
 		r.rows[i] = make([]byte, rowBytes)
@@ -79,8 +83,9 @@ func (r *rleWriter) Finish() error {
 
 	// If we have a colormap from quantization, encode it
 	if r.info.QuantizeColors && r.info.Colormap != nil {
-		ncmap = r.info.NumComponents
+		ncolors = 1
 		cm := r.info.Colormap
+		ncmap = len(cm.Maps)
 		cmapLen := 256
 		cmapData = make([]uint16, ncmap*cmapLen)
 		for ci := 0; ci < ncmap; ci++ {
@@ -120,10 +125,10 @@ func (r *rleWriter) Finish() error {
 	}
 
 	// Image dimensions
-	writeLE16(r.w, uint16(0))                   // xmin
-	writeLE16(r.w, uint16(r.info.Width-1))      // xmax
-	writeLE16(r.w, uint16(0))                   // ymin
-	writeLE16(r.w, uint16(r.info.Height-1))     // ymax
+	writeLE16(r.w, uint16(0))               // xmin
+	writeLE16(r.w, uint16(r.info.Width-1))  // xmax
+	writeLE16(r.w, uint16(0))               // ymin
+	writeLE16(r.w, uint16(r.info.Height-1)) // ymax
 
 	// Number of color channels and flags
 	r.w.Write([]byte{byte(ncolors)}) // ncolors
@@ -136,7 +141,7 @@ func (r *rleWriter) Finish() error {
 		writeRLEOpcode(r.w, rleOpColor, 0)
 
 		// Encode the row using run-length encoding
-		if ncolors == 1 {
+		if r.indexed || ncolors == 1 {
 			rleEncodeRow(r.w, data, r.info.Width)
 		} else {
 			// For multi-channel, interleave channels into RLE format.
@@ -214,4 +219,3 @@ func writeBE16(w io.Writer, v uint16) {
 	binary.BigEndian.PutUint16(buf[:], v)
 	w.Write(buf[:])
 }
-

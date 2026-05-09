@@ -14,14 +14,27 @@ import (
 
 // Config describes decoded raster metadata.
 type Config struct {
-	Width           int
-	Height          int
-	Components      int
-	Stride          int
-	PixelFormat     PixelFormat
-	ColorSpace      ColorSpace
-	InputComponents int
-	InputColorSpace ColorSpace
+	Width            int
+	Height           int
+	Components       int
+	Stride           int
+	PixelFormat      PixelFormat
+	ColorSpace       ColorSpace
+	InputComponents  int
+	InputColorSpace  ColorSpace
+	Baseline         bool
+	Progressive      bool
+	Arithmetic       bool
+	HasMultipleScans bool
+	InputComplete    bool
+	SawJFIFMarker    bool
+	JFIFMajorVersion uint8
+	JFIFMinorVersion uint8
+	DensityUnit      uint8
+	XDensity         uint16
+	YDensity         uint16
+	SawAdobeMarker   bool
+	AdobeTransform   uint8
 }
 
 // ImageConfig converts Config to the standard image.Config type.
@@ -38,6 +51,8 @@ func (c Config) ColorModel() color.Model {
 	switch c.PixelFormat {
 	case PixelFormatGray8:
 		return color.GrayModel
+	case PixelFormatCMYK32:
+		return color.CMYKModel
 	default:
 		return color.RGBAModel
 	}
@@ -122,10 +137,13 @@ func DecodeRasterConfigWithOptions(r io.Reader, opts *Options) (Config, error) {
 // Decoder exposes a low-level scanline-oriented public API without leaking
 // internal decoder types.
 type Decoder struct {
-	dec    *internaldecoder.Decoder
-	opts   Options
-	header Config
-	output Config
+	dec           *internaldecoder.Decoder
+	opts          Options
+	header        Config
+	output        Config
+	scaled        *Raster
+	scaledNextRow int
+	internalDone  bool
 }
 
 // NewDecoder creates a decoder for r.
@@ -150,6 +168,13 @@ func (d *Decoder) ReadHeader() (Config, error) {
 		return Config{}, wrapDecodeError("read header", err)
 	}
 	cfg := configFromHeader(width, height, inputComponents, inputCS)
+	if err := d.applyOutputColorSpaceToConfig(&cfg); err != nil {
+		return Config{}, err
+	}
+	if err := d.applyScaleToConfig(&cfg); err != nil {
+		return Config{}, err
+	}
+	d.populateHeaderMetadata(&cfg)
 	d.header = cfg
 	return cfg, nil
 }
@@ -167,12 +192,30 @@ func (d *Decoder) Start() error {
 	if err := d.dec.StartDecompress(); err != nil {
 		return wrapDecodeError("start decompress", err)
 	}
-	d.output = configFromOutput(d.dec)
-	d.output.InputComponents = d.header.InputComponents
-	if d.output.InputColorSpace == ColorSpaceUnknown {
-		d.output.InputColorSpace = d.header.InputColorSpace
+	baseOutput := configFromOutput(d.dec)
+	baseOutput.InputComponents = d.header.InputComponents
+	if baseOutput.InputColorSpace == ColorSpaceUnknown {
+		baseOutput.InputColorSpace = d.header.InputColorSpace
+	}
+	d.populateHeaderMetadata(&baseOutput)
+	d.output = baseOutput
+	if err := d.applyScaleToConfig(&d.output); err != nil {
+		return err
+	}
+	if d.output.Width != baseOutput.Width || d.output.Height != baseOutput.Height {
+		scaled, err := d.readAndScaleStartedDecoder(baseOutput, d.output.Width, d.output.Height)
+		if err != nil {
+			return err
+		}
+		d.scaled = scaled
+		d.scaledNextRow = 0
 	}
 	return nil
+}
+
+// StartDecompress starts decompression using libjpeg-style naming.
+func (d *Decoder) StartDecompress() error {
+	return d.Start()
 }
 
 // ReadScanlines reads decoded scanlines into caller-provided row buffers.
@@ -185,6 +228,16 @@ func (d *Decoder) ReadScanlines(rows [][]byte) (int, error) {
 			}
 		}
 	}
+	if d.scaled != nil {
+		rowsRead := 0
+		for rowsRead < len(rows) && d.scaledNextRow < d.scaled.Rect.Dy() {
+			src := d.scaled.Pix[d.scaledNextRow*d.scaled.Stride : d.scaledNextRow*d.scaled.Stride+d.scaled.Stride]
+			copy(rows[rowsRead], src)
+			rowsRead++
+			d.scaledNextRow++
+		}
+		return rowsRead, nil
+	}
 	n, err := d.dec.ReadScanlines(rows)
 	if err != nil {
 		return n, wrapDecodeError("read scanlines", err)
@@ -194,10 +247,48 @@ func (d *Decoder) ReadScanlines(rows [][]byte) (int, error) {
 
 // Finish completes decompression.
 func (d *Decoder) Finish() error {
+	if d.internalDone {
+		return nil
+	}
 	if err := d.dec.FinishDecompress(); err != nil {
 		return wrapDecodeError("finish decompress", err)
 	}
+	d.internalDone = true
 	return nil
+}
+
+// FinishDecompress completes decompression using libjpeg-style naming.
+func (d *Decoder) FinishDecompress() error {
+	return d.Finish()
+}
+
+// Abort stops the current decompression operation and clears decoder-owned
+// output state. It mirrors libjpeg's jpeg_abort_decompress behavior at the
+// public facade level; the caller must provide a new reader to decode again.
+func (d *Decoder) Abort() {
+	d.dec.Abort()
+	d.header = Config{}
+	d.output = Config{}
+	d.scaled = nil
+	d.scaledNextRow = 0
+	d.internalDone = false
+}
+
+// Markers returns APPn and COM markers retained while reading the JPEG header.
+// Configure retained marker types with WithSavedMarkers before ReadHeader.
+func (d *Decoder) Markers() []Marker {
+	internal := d.dec.SavedMarkers()
+	out := make([]Marker, len(internal))
+	for i, m := range internal {
+		data := make([]byte, len(m.Data))
+		copy(data, m.Data)
+		out[i] = Marker{
+			Code:           m.Code,
+			OriginalLength: m.OriginalLength,
+			Data:           data,
+		}
+	}
+	return out
 }
 
 // OutputConfig returns output metadata after Start. Before Start, it returns
@@ -209,7 +300,57 @@ func (d *Decoder) OutputConfig() Config {
 	return d.header
 }
 
+// Header returns the header-derived configuration from the most recent
+// ReadHeader call.
+func (d *Decoder) Header() Config {
+	return d.header
+}
+
+// OutputScanline returns the next output scanline index.
+func (d *Decoder) OutputScanline() int {
+	if d.scaled != nil {
+		return d.scaledNextRow
+	}
+	return d.dec.OutputScanline()
+}
+
+// InputComplete reports whether the JPEG input has been fully consumed.
+func (d *Decoder) InputComplete() bool {
+	return d.dec.InputComplete()
+}
+
+// HasMultipleScans reports whether the JPEG header indicates multiple scans.
+func (d *Decoder) HasMultipleScans() bool {
+	return d.dec.HasMultipleScans()
+}
+
+// IsBaseline reports whether the JPEG uses baseline DCT coding.
+func (d *Decoder) IsBaseline() bool {
+	return d.dec.IsBaseline()
+}
+
+// IsProgressive reports whether the JPEG uses progressive coding.
+func (d *Decoder) IsProgressive() bool {
+	return d.dec.IsProgressive()
+}
+
+// IsArithmetic reports whether the JPEG uses arithmetic entropy coding.
+func (d *Decoder) IsArithmetic() bool {
+	return d.dec.IsArithmetic()
+}
+
 func (d *Decoder) applyOptions() error {
+	if d.opts.MaxMemoryBytes < 0 {
+		return fmt.Errorf("%w: max memory must be non-negative", ErrInvalidOption)
+	}
+	for _, saved := range d.opts.SavedMarkers {
+		if !validSavedMarkerCode(saved.Code) {
+			return fmt.Errorf("%w: marker code 0x%02x cannot be saved", ErrInvalidOption, saved.Code)
+		}
+		if err := d.dec.SaveMarkers(saved.Code, saved.LengthLimit); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidOption, err)
+		}
+	}
 	idct, err := d.opts.IDCT.decoderName()
 	if err != nil {
 		return err
@@ -218,7 +359,7 @@ func (d *Decoder) applyOptions() error {
 	if err != nil {
 		return err
 	}
-	chromaIDCTScaling, err := d.opts.Compatibility.chromaIDCTScaling()
+	chromaIDCTScaling, err := d.opts.effectiveChromaIDCTScaling()
 	if err != nil {
 		return err
 	}
@@ -233,7 +374,110 @@ func (d *Decoder) applyOptions() error {
 	if err := d.dec.SetInputColorSpace(inputColorSpace); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidOption, err)
 	}
+	colorTransform, err := d.opts.ColorTransform.decoderName()
+	if err != nil {
+		return err
+	}
+	if err := d.dec.SetColorTransform(colorTransform); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidOption, err)
+	}
+	outputColorSpace, err := d.opts.OutputColorSpace.outputDecoderName()
+	if err != nil {
+		return err
+	}
+	if err := d.dec.SetOutputColorSpace(outputColorSpace); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidOption, err)
+	}
+	if err := d.dec.SetMaxMemory(d.opts.MaxMemoryBytes); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidOption, err)
+	}
 	return nil
+}
+
+func (d *Decoder) readAndScaleStartedDecoder(base Config, width, height int) (*Raster, error) {
+	raster := NewRaster(base.Width, base.Height, base.PixelFormat)
+	if raster.Format == PixelFormatUnknown {
+		return nil, fmt.Errorf("%w: unsupported output pixel format %s", ErrUnsupported, base.PixelFormat)
+	}
+	for y := 0; y < base.Height; y++ {
+		row := raster.Pix[y*raster.Stride : y*raster.Stride+raster.Stride]
+		n, err := d.dec.ReadScanlines([][]byte{row})
+		if err != nil {
+			return nil, wrapDecodeError("read scanlines", err)
+		}
+		if n == 0 {
+			break
+		}
+	}
+	if err := d.dec.FinishDecompress(); err != nil {
+		return nil, wrapDecodeError("finish decompress", err)
+	}
+	d.internalDone = true
+	scaled, err := scaleRasterNearest(raster, width, height)
+	if err != nil {
+		return nil, err
+	}
+	return scaled, nil
+}
+
+func (d *Decoder) applyOutputColorSpaceToConfig(cfg *Config) error {
+	switch d.opts.OutputColorSpace {
+	case ColorSpaceUnknown:
+		return nil
+	case ColorSpaceGray:
+		cfg.PixelFormat = PixelFormatGray8
+		cfg.ColorSpace = ColorSpaceGray
+	case ColorSpaceRGB:
+		cfg.PixelFormat = PixelFormatRGB24
+		cfg.ColorSpace = ColorSpaceRGB
+	case ColorSpaceCMYK:
+		cfg.PixelFormat = PixelFormatCMYK32
+		cfg.ColorSpace = ColorSpaceCMYK
+	case ColorSpaceYCCK:
+		cfg.PixelFormat = PixelFormatYCCK32
+		cfg.ColorSpace = ColorSpaceYCCK
+	default:
+		return fmt.Errorf("%w: output color space %s is not supported", ErrUnsupported, d.opts.OutputColorSpace)
+	}
+	cfg.Components = cfg.PixelFormat.Channels()
+	cfg.Stride = cfg.Width * cfg.Components
+	return nil
+}
+
+func (d *Decoder) applyScaleToConfig(cfg *Config) error {
+	scale, enabled, err := d.opts.scaleSize()
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return nil
+	}
+	width, height, err := scaledDimensions(cfg.Width, cfg.Height, scale)
+	if err != nil {
+		return err
+	}
+	cfg.Width = width
+	cfg.Height = height
+	cfg.Stride = width * cfg.Components
+	return nil
+}
+
+func (d *Decoder) populateHeaderMetadata(cfg *Config) {
+	cfg.Baseline = d.dec.IsBaseline()
+	cfg.Progressive = d.dec.IsProgressive()
+	cfg.Arithmetic = d.dec.IsArithmetic()
+	cfg.HasMultipleScans = d.dec.HasMultipleScans()
+	cfg.InputComplete = d.dec.InputComplete()
+	sawJFIF, major, minor, densityUnit, xDensity, yDensity := d.dec.JFIFInfo()
+	cfg.SawJFIFMarker = sawJFIF
+	cfg.JFIFMajorVersion = major
+	cfg.JFIFMinorVersion = minor
+	cfg.DensityUnit = densityUnit
+	cfg.XDensity = xDensity
+	cfg.YDensity = yDensity
+	sawAdobe, transform := d.dec.AdobeInfo()
+	cfg.SawAdobeMarker = sawAdobe
+	cfg.AdobeTransform = transform
 }
 
 func configFromHeader(width, height, inputComponents int, inputCS marker.ColorSpace) Config {
@@ -243,6 +487,9 @@ func configFromHeader(width, height, inputComponents int, inputCS marker.ColorSp
 	if inputComponents == 1 || inputCS == marker.CSGrayScale {
 		pixelFormat = PixelFormatGray8
 		outputColorSpace = ColorSpaceGray
+	} else if inputComponents == 4 || inputCS == marker.CSCMYK || inputCS == marker.CSYCCK {
+		pixelFormat = PixelFormatCMYK32
+		outputColorSpace = ColorSpaceCMYK
 	}
 	components := pixelFormat.Channels()
 	return Config{
@@ -263,6 +510,14 @@ func configFromOutput(dec *internaldecoder.Decoder) Config {
 	if dec.OutputComponents() == 1 || dec.OutColorSpace() == marker.CSGrayScale {
 		pixelFormat = PixelFormatGray8
 		colorSpace = ColorSpaceGray
+	} else if dec.OutputComponents() == 4 || dec.OutColorSpace() == marker.CSCMYK || dec.OutColorSpace() == marker.CSYCCK {
+		if dec.OutColorSpace() == marker.CSYCCK {
+			pixelFormat = PixelFormatYCCK32
+			colorSpace = ColorSpaceYCCK
+		} else {
+			pixelFormat = PixelFormatCMYK32
+			colorSpace = ColorSpaceCMYK
+		}
 	}
 	components := pixelFormat.Channels()
 	return Config{
@@ -300,6 +555,9 @@ func colorSpaceFromMarker(cs marker.ColorSpace) ColorSpace {
 func wrapDecodeError(stage string, err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, internaldecoder.ErrMemoryLimitExceeded) {
+		return fmt.Errorf("%s: %w: %v", stage, ErrMemoryLimit, err)
 	}
 	if isUnsupportedError(err) {
 		return fmt.Errorf("%s: %w: %v", stage, ErrUnsupported, err)

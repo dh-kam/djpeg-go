@@ -3,6 +3,7 @@ package decoder
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"strings"
@@ -45,6 +46,8 @@ type Decoder struct {
 
 	vCbRow []int
 	vCrRow []int
+	vRRow  []int
+	vKRow  []int
 
 	colorConv *color.ColorConverter
 
@@ -61,12 +64,29 @@ type Decoder struct {
 
 	inputColorSpaceOverride    marker.ColorSpace
 	hasInputColorSpaceOverride bool
+
+	outputColorSpaceOverride    marker.ColorSpace
+	hasOutputColorSpaceOverride bool
+
+	colorTransformOverride    marker.ColorTransform
+	hasColorTransformOverride bool
+
+	maxMemoryBytes int64
+	memoryUsed     int64
 }
 
 var (
-	ErrUnsupportedJPEG = errors.New("jpeg: unsupported JPEG format")
-	ErrDecodeFailed    = errors.New("jpeg: decode failed")
+	ErrUnsupportedJPEG     = errors.New("jpeg: unsupported JPEG format")
+	ErrDecodeFailed        = errors.New("jpeg: decode failed")
+	ErrMemoryLimitExceeded = errors.New("jpeg: memory limit exceeded")
 )
+
+// SavedMarker is a retained APPn or COM marker payload.
+type SavedMarker struct {
+	Code           int
+	OriginalLength uint
+	Data           []byte
+}
 
 const rlColorOffset = huff.RangeSubset
 
@@ -113,12 +133,129 @@ func (dec *Decoder) SetInputColorSpace(space string) error {
 		cs = marker.CSRGB
 	case "ycbcr", "ycc":
 		cs = marker.CSYCbCr
+	case "cmyk":
+		cs = marker.CSCMYK
+	case "ycck":
+		cs = marker.CSYCCK
 	default:
 		return errors.New("jpeg: unsupported input colorspace")
 	}
 	dec.inputColorSpaceOverride = cs
 	dec.hasInputColorSpaceOverride = true
 	dec.applyInputColorSpaceOverride()
+	return nil
+}
+
+// SetOutputColorSpace forces the decoded output colorspace.
+func (dec *Decoder) SetOutputColorSpace(space string) error {
+	var cs marker.ColorSpace
+	switch strings.ToLower(strings.TrimSpace(space)) {
+	case "", "auto", "default":
+		dec.hasOutputColorSpaceOverride = false
+		return nil
+	case "gray", "grey", "grayscale", "greyscale":
+		cs = marker.CSGrayScale
+	case "rgb":
+		cs = marker.CSRGB
+	case "cmyk":
+		cs = marker.CSCMYK
+	case "ycck":
+		cs = marker.CSYCCK
+	default:
+		return errors.New("jpeg: unsupported output colorspace")
+	}
+	dec.outputColorSpaceOverride = cs
+	dec.hasOutputColorSpaceOverride = true
+	dec.applyOutputColorSpaceOverride()
+	return nil
+}
+
+// SetColorTransform overrides the inverse color transform inferred from the
+// stream metadata.
+func (dec *Decoder) SetColorTransform(transform string) error {
+	var ct marker.ColorTransform
+	switch strings.ToLower(strings.TrimSpace(transform)) {
+	case "", "auto", "default":
+		dec.hasColorTransformOverride = false
+		return nil
+	case "none", "0":
+		ct = marker.CTNone
+	case "subtract-green", "subtractgreen", "rgb1", "1":
+		ct = marker.CTSubtractGreen
+	default:
+		return errors.New("jpeg: unsupported color transform")
+	}
+	dec.colorTransformOverride = ct
+	dec.hasColorTransformOverride = true
+	dec.applyColorTransformOverride()
+	return nil
+}
+
+// SaveMarkers configures APPn or COM marker retention before ReadHeader.
+func (dec *Decoder) SaveMarkers(markerCode int, lengthLimit uint) error {
+	if markerCode != marker.M_COM && (markerCode < marker.M_APP0 || markerCode > marker.M_APP15) {
+		return errors.New("jpeg: unsupported marker save code")
+	}
+	dec.d.SaveMarkers(markerCode, lengthLimit)
+	return nil
+}
+
+// SavedMarkers returns a copy of markers retained while reading the header.
+func (dec *Decoder) SavedMarkers() []SavedMarker {
+	var out []SavedMarker
+	for cur := dec.d.MarkerList; cur != nil; cur = cur.Next {
+		data := make([]byte, len(cur.Data))
+		copy(data, cur.Data)
+		out = append(out, SavedMarker{
+			Code:           int(cur.Marker),
+			OriginalLength: cur.OriginalLength,
+			Data:           data,
+		})
+	}
+	return out
+}
+
+// Abort resets decompression state without destroying the decoder.
+func (dec *Decoder) Abort() {
+	dec.d.Abort()
+	dec.scanData = nil
+	dec.permState = huff.BitReadState{}
+	dec.savedState = huff.SavableState{}
+	dec.workState = huff.BitReadWorkingState{}
+	dec.restartsToGo = 0
+	dec.insufficient = false
+	dec.unreadMarker = 0
+	dec.dcTables = nil
+	dec.acTables = nil
+	dec.mcuMembership = nil
+	dec.multTablesISlow = nil
+	dec.multTablesIFast = nil
+	dec.multTablesFloat = nil
+	dec.rangeLimit = nil
+	dec.rlColorConv = nil
+	dec.outputBuf = [16]huff.BlockRow{}
+	dec.blocks = nil
+	dec.quantTables = nil
+	dec.vCbRow = nil
+	dec.vCrRow = nil
+	dec.vRRow = nil
+	dec.vKRow = nil
+	dec.colorConv = nil
+	dec.componentBuf = nil
+	dec.rowGroupCtr = 0
+	dec.rowGroupsAvail = 0
+	dec.currentIMCURow = 0
+	dec.totalIMCURows = 0
+	dec.allDecoded = false
+	dec.memoryUsed = 0
+}
+
+// SetMaxMemory sets an approximate upper bound for decoder-owned buffers.
+func (dec *Decoder) SetMaxMemory(bytes int64) error {
+	if bytes < 0 {
+		return errors.New("jpeg: negative max memory")
+	}
+	dec.maxMemoryBytes = bytes
 	return nil
 }
 
@@ -132,7 +269,23 @@ func (dec *Decoder) applyInputColorSpaceOverride() {
 		dec.d.OutColorSpace = marker.CSGrayScale
 	case marker.CSRGB, marker.CSYCbCr:
 		dec.d.OutColorSpace = marker.CSRGB
+	case marker.CSCMYK, marker.CSYCCK:
+		dec.d.OutColorSpace = marker.CSCMYK
 	}
+}
+
+func (dec *Decoder) applyOutputColorSpaceOverride() {
+	if !dec.hasOutputColorSpaceOverride {
+		return
+	}
+	dec.d.OutColorSpace = dec.outputColorSpaceOverride
+}
+
+func (dec *Decoder) applyColorTransformOverride() {
+	if !dec.hasColorTransformOverride {
+		return
+	}
+	dec.d.ColorTransform = dec.colorTransformOverride
 }
 
 func (dec *Decoder) ReadHeader() (int, int, int, marker.ColorSpace, error) {
@@ -150,12 +303,17 @@ func (dec *Decoder) ReadHeader() (int, int, int, marker.ColorSpace, error) {
 		return 0, 0, 0, 0, errors.New("jpeg: arithmetic coding not supported")
 	}
 	dec.applyInputColorSpaceOverride()
+	dec.applyOutputColorSpaceOverride()
+	dec.applyColorTransformOverride()
 	return dec.d.ImageWidth, dec.d.ImageHeight, dec.d.NumComponents, dec.d.JPEGColorSpace, nil
 }
 
 func (dec *Decoder) StartDecompress() error {
 	d := dec.d
+	dec.memoryUsed = 0
 	dec.applyInputColorSpaceOverride()
+	dec.applyOutputColorSpaceOverride()
+	dec.applyColorTransformOverride()
 	d.DoFancyUpsampling = dec.DoFancyUpsampling
 	d.DisableChromaIDCTScaling = dec.DisableChromaIDCTScaling
 	if err := d.StartInputPass(); err != nil {
@@ -198,7 +356,12 @@ func (dec *Decoder) StartDecompress() error {
 	if err := d.StartDecompress(); err != nil {
 		return err
 	}
-	dec.setupColorPipeline()
+	if err := dec.validateColorConversion(); err != nil {
+		return err
+	}
+	if err := dec.setupColorPipeline(); err != nil {
+		return err
+	}
 	dec.totalIMCURows = d.MCURowsInScan
 	dec.currentIMCURow = 0
 	return nil
@@ -207,8 +370,27 @@ func (dec *Decoder) StartDecompress() error {
 func (dec *Decoder) OutputWidth() int                  { return dec.d.OutputWidth }
 func (dec *Decoder) OutputHeight() int                 { return dec.d.OutputHeight }
 func (dec *Decoder) OutputComponents() int             { return dec.d.OutputComponents }
+func (dec *Decoder) OutputScanline() int               { return dec.d.OutputScanline }
 func (dec *Decoder) OutColorSpace() marker.ColorSpace  { return dec.d.OutColorSpace }
 func (dec *Decoder) JPEGColorSpace() marker.ColorSpace { return dec.d.JPEGColorSpace }
+func (dec *Decoder) IsBaseline() bool                  { return dec.d.IsBaselineJPEG() }
+func (dec *Decoder) IsProgressive() bool               { return dec.d.IsProgressive() }
+func (dec *Decoder) IsArithmetic() bool                { return dec.d.ArithCodeFlag }
+func (dec *Decoder) InputComplete() bool               { return dec.d.InputComplete() }
+func (dec *Decoder) HasMultipleScans() bool            { return dec.d.HasMultipleScans() }
+
+func (dec *Decoder) JFIFInfo() (saw bool, major, minor, densityUnit uint8, xDensity, yDensity uint16) {
+	return dec.d.SawJFIFMarker,
+		dec.d.JFIFMajorVersion,
+		dec.d.JFIFMinorVersion,
+		dec.d.DensityUnit,
+		dec.d.XDensity,
+		dec.d.YDensity
+}
+
+func (dec *Decoder) AdobeInfo() (saw bool, transform uint8) {
+	return dec.d.SawAdobeMarker, dec.d.AdobeTransform
+}
 
 func (dec *Decoder) ReadScanlines(scanlines [][]uint8) (int, error) {
 	if dec.d.GlobalState != marker.DStateScanning {
@@ -250,6 +432,29 @@ func (dec *Decoder) FinishDecompress() error {
 	return err
 }
 
+func (dec *Decoder) validateColorConversion() error {
+	d := dec.d
+	if d.NumComponents != 4 {
+		return nil
+	}
+	switch d.OutColorSpace {
+	case marker.CSCMYK:
+		if d.JPEGColorSpace == marker.CSCMYK || d.JPEGColorSpace == marker.CSYCCK {
+			return nil
+		}
+	case marker.CSYCCK:
+		if d.JPEGColorSpace == marker.CSYCCK {
+			return nil
+		}
+	case marker.CSRGB, marker.CSGrayScale:
+		if d.JPEGColorSpace == marker.CSCMYK || d.JPEGColorSpace == marker.CSYCCK {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: unsupported 4-component conversion from %v to %v",
+		ErrUnsupportedJPEG, d.JPEGColorSpace, d.OutColorSpace)
+}
+
 func (dec *Decoder) readAllScanData() error {
 	capHint := 0
 	if r, ok := dec.d.Src.(interface{ Len() int }); ok {
@@ -260,6 +465,10 @@ func (dec *Decoder) readAllScanData() error {
 	for {
 		n, err := io.ReadFull(dec.d.Src, readBuf)
 		if n > 0 {
+			if dec.maxMemoryBytes > 0 && int64(len(buf)+n) > dec.maxMemoryBytes {
+				return fmt.Errorf("%w: entropy stream needs at least %d bytes, limit is %d",
+					ErrMemoryLimitExceeded, len(buf)+n, dec.maxMemoryBytes)
+			}
 			buf = append(buf, readBuf[:n]...)
 		}
 		if err != nil {
@@ -297,6 +506,9 @@ func (dec *Decoder) readAllScanData() error {
 		i++
 	}
 	dec.scanData = buf[:end]
+	if err := dec.reserveMemory(int64(len(dec.scanData)), "entropy stream"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -406,6 +618,10 @@ func (dec *Decoder) upsampleAndConvert(outputRow []byte) {
 	outputWidth := d.OutputWidth
 
 	if d.OutputComponents == 1 {
+		if d.JPEGColorSpace == marker.CSRGB && d.NumComponents >= 3 {
+			dec.convertRGBToGray(outputRow)
+			return
+		}
 		rowIdx := dec.rowGroupCtr
 		if rowIdx >= len(dec.componentBuf[0]) {
 			rowIdx = len(dec.componentBuf[0]) - 1
@@ -416,6 +632,11 @@ func (dec *Decoder) upsampleAndConvert(outputRow []byte) {
 			n = len(srcRow)
 		}
 		copy(outputRow[:n], srcRow[:n])
+		return
+	}
+
+	if d.NumComponents == 4 {
+		dec.upsampleAndConvert4(outputRow)
 		return
 	}
 
@@ -643,6 +864,146 @@ func (dec *Decoder) upsampleAndConvert(outputRow []byte) {
 	}
 }
 
+func (dec *Decoder) upsampleAndConvert4(outputRow []byte) {
+	d := dec.d
+	outputWidth := d.OutputWidth
+	if d.NumComponents < 4 {
+		return
+	}
+	if cap(dec.vRRow) < outputWidth {
+		dec.vRRow = make([]int, outputWidth)
+	}
+	if cap(dec.vCbRow) < outputWidth {
+		dec.vCbRow = make([]int, outputWidth)
+	}
+	if cap(dec.vCrRow) < outputWidth {
+		dec.vCrRow = make([]int, outputWidth)
+	}
+	if cap(dec.vKRow) < outputWidth {
+		dec.vKRow = make([]int, outputWidth)
+	}
+
+	c0 := dec.vRRow[:outputWidth]
+	c1 := dec.vCbRow[:outputWidth]
+	c2 := dec.vCrRow[:outputWidth]
+	c3 := dec.vKRow[:outputWidth]
+	dec.upsampleComponentToInt(0, dec.rowGroupCtr, c0)
+	dec.upsampleComponentToInt(1, dec.rowGroupCtr, c1)
+	dec.upsampleComponentToInt(2, dec.rowGroupCtr, c2)
+	dec.upsampleComponentToInt(3, dec.rowGroupCtr, c3)
+
+	switch d.OutColorSpace {
+	case marker.CSCMYK:
+		for col := 0; col < outputWidth; col++ {
+			c, m, y, k := dec.fourComponentCMYK(c0[col], c1[col], c2[col], c3[col])
+			idx := col * 4
+			outputRow[idx] = byte(c)
+			outputRow[idx+1] = byte(m)
+			outputRow[idx+2] = byte(y)
+			outputRow[idx+3] = byte(k)
+		}
+	case marker.CSYCCK:
+		for col := 0; col < outputWidth; col++ {
+			idx := col * 4
+			outputRow[idx] = byte(c0[col])
+			outputRow[idx+1] = byte(c1[col])
+			outputRow[idx+2] = byte(c2[col])
+			outputRow[idx+3] = byte(c3[col])
+		}
+	case marker.CSRGB:
+		for col := 0; col < outputWidth; col++ {
+			c, m, y, k := dec.fourComponentCMYK(c0[col], c1[col], c2[col], c3[col])
+			r, g, b := cmykToRGB(c, m, y, k)
+			idx := col * 3
+			outputRow[idx] = byte(r)
+			outputRow[idx+1] = byte(g)
+			outputRow[idx+2] = byte(b)
+		}
+	case marker.CSGrayScale:
+		for col := 0; col < outputWidth; col++ {
+			c, m, y, k := dec.fourComponentCMYK(c0[col], c1[col], c2[col], c3[col])
+			r, g, b := cmykToRGB(c, m, y, k)
+			outputRow[col] = byte(rgbToGrayInt(r, g, b))
+		}
+	}
+}
+
+func (dec *Decoder) fourComponentCMYK(c0, c1, c2, c3 int) (int, int, int, int) {
+	if dec.d.JPEGColorSpace == marker.CSYCCK {
+		r, g, b := ycbcrToRGB(c0, c1, c2)
+		return 255 - r, 255 - g, 255 - b, c3
+	}
+	return clampSample(c0), clampSample(c1), clampSample(c2), clampSample(c3)
+}
+
+func ycbcrToRGB(y, cb, cr int) (int, int, int) {
+	cb -= 128
+	cr -= 128
+	r := y + ((91881*cr + 32768) >> 16)
+	g := y + ((-22554*cb - 46802*cr + 32768) >> 16)
+	b := y + ((116130*cb + 32768) >> 16)
+	return clampSample(r), clampSample(g), clampSample(b)
+}
+
+func cmykToRGB(c, m, y, k int) (int, int, int) {
+	white := 255 - clampSample(k)
+	return (255 - clampSample(c)) * white / 255,
+		(255 - clampSample(m)) * white / 255,
+		(255 - clampSample(y)) * white / 255
+}
+
+func rgbToGrayInt(r, g, b int) int {
+	return (19595*r + 38470*g + 7471*b + 1<<15) >> 16
+}
+
+func clampSample(v int) int {
+	if v < 0 {
+		return 0
+	}
+	if v > 255 {
+		return 255
+	}
+	return v
+}
+
+func (dec *Decoder) convertRGBToGray(outputRow []byte) {
+	outputWidth := dec.d.OutputWidth
+	if cap(dec.vRRow) < outputWidth {
+		dec.vRRow = make([]int, outputWidth)
+	}
+	if cap(dec.vCbRow) < outputWidth {
+		dec.vCbRow = make([]int, outputWidth)
+	}
+	if cap(dec.vCrRow) < outputWidth {
+		dec.vCrRow = make([]int, outputWidth)
+	}
+
+	red := dec.vRRow[:outputWidth]
+	green := dec.vCbRow[:outputWidth]
+	blue := dec.vCrRow[:outputWidth]
+	dec.upsampleComponentToInt(0, dec.rowGroupCtr, red)
+	dec.upsampleComponentToInt(1, dec.rowGroupCtr, green)
+	dec.upsampleComponentToInt(2, dec.rowGroupCtr, blue)
+
+	ry := dec.colorConv.RYTab
+	gy := dec.colorConv.GYTab
+	by := dec.colorConv.BYTab
+	if dec.d.ColorTransform == marker.CTSubtractGreen {
+		for col := 0; col < outputWidth; col++ {
+			g := green[col]
+			r := (red[col] + g - 128) & 0xff
+			b := (blue[col] + g - 128) & 0xff
+			y := ry[r] + gy[g] + by[b]
+			outputRow[col] = byte(y >> 16)
+		}
+		return
+	}
+	for col := 0; col < outputWidth; col++ {
+		y := ry[red[col]] + gy[green[col]] + by[blue[col]]
+		outputRow[col] = byte(y >> 16)
+	}
+}
+
 func (dec *Decoder) greenContribution(cb, cr int, cbG, crG []int) int {
 	if dec.DisableChromaIDCTScaling {
 		cbf := float64(cb - 128)
@@ -669,6 +1030,20 @@ func (dec *Decoder) upsampleRGB(outputRow []byte) {
 	dec.upsampleComponentToInt(2, dec.rowGroupCtr, blue)
 
 	redRow := dec.componentBuf[0][clampIndex(dec.rowGroupCtr, len(dec.componentBuf[0]))]
+	if d.ColorTransform == marker.CTSubtractGreen {
+		for col := 0; col < outputWidth; col++ {
+			rCol := col
+			if rCol >= len(redRow) {
+				rCol = len(redRow) - 1
+			}
+			g := green[col]
+			idx := col * 3
+			outputRow[idx] = byte((int(redRow[rCol]) + g - 128) & 0xff)
+			outputRow[idx+1] = byte(g)
+			outputRow[idx+2] = byte((blue[col] + g - 128) & 0xff)
+		}
+		return
+	}
 	for col := 0; col < outputWidth; col++ {
 		rCol := col
 		if rCol >= len(redRow) {
@@ -885,7 +1260,7 @@ func (dec *Decoder) buildIDCTTables() {
 	}
 }
 
-func (dec *Decoder) setupColorPipeline() {
+func (dec *Decoder) setupColorPipeline() error {
 	d := dec.d
 	info := &color.DecompressInfo{
 		OutputWidth:        d.OutputWidth,
@@ -905,6 +1280,12 @@ func (dec *Decoder) setupColorPipeline() {
 		LimSe:              d.LimSe,
 		BlocksInMCU:        d.BlocksInMCU,
 	}
+	switch d.ColorTransform {
+	case marker.CTSubtractGreen:
+		info.ColorTransform = color.JCT_SUBTRACT_GREEN
+	default:
+		info.ColorTransform = color.JCT_NONE
+	}
 	switch d.JPEGColorSpace {
 	case marker.CSGrayScale:
 		info.JpegColorSpace = color.JCS_GRAYSCALE
@@ -912,6 +1293,14 @@ func (dec *Decoder) setupColorPipeline() {
 		info.JpegColorSpace = color.JCS_YCbCr
 	case marker.CSRGB:
 		info.JpegColorSpace = color.JCS_RGB
+	case marker.CSCMYK:
+		info.JpegColorSpace = color.JCS_CMYK
+	case marker.CSYCCK:
+		info.JpegColorSpace = color.JCS_YCCK
+	case marker.CSBGRGB:
+		info.JpegColorSpace = color.JCS_BG_RGB
+	case marker.CSBGYCC:
+		info.JpegColorSpace = color.JCS_BG_YCC
 	default:
 		info.JpegColorSpace = color.JCS_YCbCr
 	}
@@ -920,6 +1309,10 @@ func (dec *Decoder) setupColorPipeline() {
 		info.OutColorSpace = color.JCS_GRAYSCALE
 	case marker.CSRGB:
 		info.OutColorSpace = color.JCS_RGB
+	case marker.CSCMYK:
+		info.OutColorSpace = color.JCS_CMYK
+	case marker.CSYCCK:
+		info.OutColorSpace = color.JCS_YCCK
 	default:
 		info.OutColorSpace = color.JCS_RGB
 	}
@@ -951,13 +1344,26 @@ func (dec *Decoder) setupColorPipeline() {
 	}
 
 	dec.colorConv = color.NewColorConverter(info)
+	for ci := 0; ci < d.NumComponents; ci++ {
+		d.CompInfo[ci].ComponentNeeded = info.CompInfo[ci].ComponentNeeded
+	}
 
 	dec.componentBuf = make([][][]byte, d.NumComponents)
 	for ci := 0; ci < d.NumComponents; ci++ {
 		comp := &info.CompInfo[ci]
+		if !comp.ComponentNeeded {
+			continue
+		}
 		rowWidth := info.MCUsPerRow * comp.MCUWidth * comp.DCTHScalSize
 		numRows := info.TotalIMCURows * comp.MCUHeight * comp.DCTVScalSize
-		flatBuf := make([]byte, numRows*rowWidth)
+		flatLen, err := checkedBufferLen(numRows, rowWidth)
+		if err != nil {
+			return err
+		}
+		if err := dec.reserveMemory(int64(flatLen), fmt.Sprintf("component %d buffer", ci)); err != nil {
+			return err
+		}
+		flatBuf := make([]byte, flatLen)
 		dec.componentBuf[ci] = make([][]byte, numRows)
 		for r := 0; r < numRows; r++ {
 			dec.componentBuf[ci][r] = flatBuf[r*rowWidth : (r+1)*rowWidth]
@@ -967,6 +1373,33 @@ func (dec *Decoder) setupColorPipeline() {
 	dec.allDecoded = false
 	dec.rowGroupCtr = d.MaxVSampFactor * d.MinDCTVScaledSize
 	dec.rowGroupsAvail = d.MaxVSampFactor * d.MinDCTVScaledSize
+	return nil
+}
+
+func checkedBufferLen(rows, rowWidth int) (int, error) {
+	if rows < 0 || rowWidth < 0 {
+		return 0, fmt.Errorf("%w: negative buffer dimension rows=%d rowWidth=%d", ErrDecodeFailed, rows, rowWidth)
+	}
+	if rows == 0 || rowWidth == 0 {
+		return 0, nil
+	}
+	maxInt := int(^uint(0) >> 1)
+	if rows > maxInt/rowWidth {
+		return 0, fmt.Errorf("%w: component buffer too large rows=%d rowWidth=%d", ErrMemoryLimitExceeded, rows, rowWidth)
+	}
+	return rows * rowWidth, nil
+}
+
+func (dec *Decoder) reserveMemory(bytes int64, purpose string) error {
+	if bytes <= 0 {
+		return nil
+	}
+	if dec.maxMemoryBytes > 0 && dec.memoryUsed+bytes > dec.maxMemoryBytes {
+		return fmt.Errorf("%w: %s needs %d bytes, used %d, limit is %d",
+			ErrMemoryLimitExceeded, purpose, bytes, dec.memoryUsed, dec.maxMemoryBytes)
+	}
+	dec.memoryUsed += bytes
+	return nil
 }
 
 func convertHuffTable(mt *marker.HuffTable) *huff.HuffmanTable {

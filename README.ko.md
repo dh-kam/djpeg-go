@@ -1,8 +1,9 @@
 # djpeg-go
 
-`djpeg-go`는 Independent JPEG Group의 JPEG 소프트웨어 중 디코딩 경로를
-Pure Go로 포팅한 프로젝트입니다. 현재 기준 upstream은 2024년 1월 14일에
-배포된 IJG libjpeg 9f입니다.
+`djpeg-go`는 Independent JPEG Group의 JPEG 소프트웨어 중 decompressor 경로를
+Pure Go로 포팅한 프로젝트입니다. 라이브러리 목표는 libjpeg 호환 decompressor
+API이고, `cmd/djpeg` 바이너리는 그 API 위에 얹힌 CLI 호환/디버그 도구입니다.
+현재 기준 upstream은 2024년 1월 14일에 배포된 IJG libjpeg 9f입니다.
 
 디코더는 Go로 구현되어 있으며 런타임에 libjpeg를 링크하지 않습니다. 로컬의
 `jpeg-9f/` 트리는 parity와 성능 테스트를 위한 upstream 기준 구현으로
@@ -80,7 +81,7 @@ import (
 	"image/png"
 	"os"
 
-	djpeg "github.com/dh-kam/djpeg-go"
+	libjpeg "github.com/dh-kam/djpeg-go"
 )
 
 func main() {
@@ -90,7 +91,7 @@ func main() {
 	}
 	defer in.Close()
 
-	img, err := djpeg.Decode(in)
+	img, err := libjpeg.Decode(in)
 	if err != nil {
 		panic(err)
 	}
@@ -110,12 +111,19 @@ func main() {
 정확한 byte layout이 필요하면 raw pixel raster를 사용할 수 있습니다.
 
 ```go
-raster, err := djpeg.DecodeRaster(input, djpeg.WithIDCT(djpeg.IDCTInt))
+raster, err := libjpeg.DecodeRaster(
+	input,
+	libjpeg.WithCompatibility(libjpeg.CompatibilityPopplerPDF),
+)
 if err != nil {
 	return err
 }
 // raster.Pix는 top-down Gray8 또는 RGB24 데이터이며 row당 raster.Stride byte입니다.
 ```
+
+현재 import path는 repository 이름을 따릅니다. 예제에서 root package를 `libjpeg`로
+alias하는 이유는 공개 API의 주 대상이 Poppler/go-pdf 연동면이기 때문입니다.
+`djpeg` parity는 회귀 테스트와 CLI frontend로 유지합니다.
 
 JPEG를 raw binary PPM/PGM으로 디코딩:
 
@@ -132,8 +140,11 @@ fancy upsampling 비활성화:
 PDF 4:2:0 DCT stream에서 Poppler/ImageMagick 방식 출력과 맞추기:
 
 ```bash
-./dist/djpeg-linux-amd64-debug --turbo-fancy --ppm input.jpg > output.ppm
+./dist/djpeg-linux-amd64-debug --compatibility poppler-pdf --ppm input.jpg > output.ppm
 ```
+
+기존 `--turbo-fancy` 플래그는 이 compatibility profile의 deprecated alias로
+유지합니다.
 
 파일로 출력:
 

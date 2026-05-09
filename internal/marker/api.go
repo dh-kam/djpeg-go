@@ -245,6 +245,43 @@ func (d *Decompressor) Reset() {
 	d.GlobalState = DStateStart
 }
 
+// Abort resets state for an aborted decompression operation.
+func (d *Decompressor) Abort() {
+	d.Reset()
+	if d.inputCtl != nil {
+		resetInputController(d)
+	}
+	d.ImageWidth = 0
+	d.ImageHeight = 0
+	d.NumComponents = 0
+	d.JPEGColorSpace = CSUnknown
+	d.OutColorSpace = CSUnknown
+	d.OutputWidth = 0
+	d.OutputHeight = 0
+	d.OutColorComponents = 0
+	d.OutputComponents = 0
+	d.OutputScanline = 0
+	d.InputScanNumber = 0
+	d.InputIMCURow = 0
+	d.OutputScanNumber = 0
+	d.OutputIMCURow = 0
+	d.DataPrecision = 0
+	d.IsBaselineFlag = false
+	d.ProgressiveMode = false
+	d.ArithCodeFlag = false
+	d.RestartInterval = 0
+	d.SawJFIFMarker = false
+	d.JFIFMajorVersion = 1
+	d.JFIFMinorVersion = 1
+	d.DensityUnit = 0
+	d.XDensity = 1
+	d.YDensity = 1
+	d.SawAdobeMarker = false
+	d.AdobeTransform = 0
+	d.ColorTransform = CTNone
+	d.CCIR601Sampling = false
+}
+
 // SetSource sets the io.Reader source for JPEG data.
 func (d *Decompressor) SetSource(r io.Reader) {
 	d.Src = r
