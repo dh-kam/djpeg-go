@@ -48,6 +48,7 @@ type Options struct {
 	FmtPPM   bool `flag:"ppm" usage:"Output PPM/PGM format"`
 	FmtPNM   bool `flag:"pnm" usage:"Output PPM/PGM format"`
 	FmtBMP   bool `flag:"bmp" usage:"Output BMP format"`
+	FmtOS2   bool `flag:"os2" usage:"Output OS/2 BMP format"`
 	FmtGIF   bool `flag:"gif" usage:"Output GIF format"`
 	FmtGIF0  bool `flag:"gif0" usage:"Output uncompressed GIF format"`
 	FmtTarga bool `flag:"targa" usage:"Output Targa format"`
@@ -89,6 +90,7 @@ func NewRootCommand() *cobra.Command {
 		Bool("ppm", false, "Output PPM/PGM format").
 		Bool("pnm", false, "Output PPM/PGM format").
 		Bool("bmp", false, "Output BMP format").
+		Bool("os2", false, "Output OS/2 BMP format").
 		Bool("gif", false, "Output GIF format").
 		Bool("gif0", false, "Output uncompressed GIF format").
 		Bool("targa", false, "Output Targa format").
@@ -113,6 +115,9 @@ func NewRootCommand() *cobra.Command {
 			opts.Format = output.FormatPPM // default
 			if opts.FmtBMP {
 				opts.Format = output.FormatBMP
+			}
+			if opts.FmtOS2 {
+				opts.Format = output.FormatBMPOS2
 			}
 			if opts.FmtGIF {
 				opts.Format = output.FormatGIF

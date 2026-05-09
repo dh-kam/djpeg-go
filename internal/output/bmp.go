@@ -12,11 +12,12 @@ import (
 // in bottom-up order as required by the BMP specification. Rows are padded
 // to 4-byte boundaries. Grayscale output uses an 8-bit palette.
 type bmpWriter struct {
-	w       io.Writer
-	info    *ImageInfo
-	rows    [][]byte // buffered pixel rows (top-down order)
-	rowIdx  int      // next row to fill
-	rowWidth int     // bytes per row including padding
+	w        io.Writer
+	info     *ImageInfo
+	os2      bool
+	rows     [][]byte // buffered pixel rows (top-down order)
+	rowIdx   int      // next row to fill
+	rowWidth int      // bytes per row including padding
 }
 
 // Start initializes the writer. The actual BMP header is deferred until
@@ -91,62 +92,32 @@ func (b *bmpWriter) WriteScanline(line []byte) error {
 // Finish writes the BMP file header, optional color table, and pixel data
 // in bottom-up row order.
 func (b *bmpWriter) Finish() error {
-	var bitsPerPixel int
-	var cmapEntries int
+	bitsPerPixel, cmapEntries := b.headerLayout()
 
-	switch b.info.ColorSpace {
-	case ColorSpaceGrayscale:
-		bitsPerPixel = 8
-		cmapEntries = 256
-	case ColorSpaceRGB:
-		if b.info.QuantizeColors {
-			bitsPerPixel = 8
-			cmapEntries = 256
-		} else {
-			bitsPerPixel = 24
-			cmapEntries = 0
-		}
+	colorEntrySize := 4
+	dibHeaderSize := 40
+	if b.os2 {
+		colorEntrySize = 3
+		dibHeaderSize = 12
 	}
-
-	// BITMAPFILEHEADER (14 bytes) + BITMAPINFOHEADER (40 bytes) + colormap
-	headerSize := uint32(14 + 40 + cmapEntries*4)
+	headerSize := uint32(14 + dibHeaderSize + cmapEntries*colorEntrySize)
 	imageSize := uint32(b.rowWidth) * uint32(b.info.Height)
 	fileSize := headerSize + imageSize
 
-	// --- BITMAPFILEHEADER (14 bytes) ---
-	fileHeader := make([]byte, 14)
-	fileHeader[0] = 'B'
-	fileHeader[1] = 'M'
-	binary.LittleEndian.PutUint32(fileHeader[2:6], fileSize)
-	// bfReserved1, bfReserved2 = 0
-	binary.LittleEndian.PutUint32(fileHeader[10:14], headerSize)
-
-	if _, err := b.w.Write(fileHeader); err != nil {
-		return fmt.Errorf("bmp: writing file header: %w", err)
+	if err := b.writeFileHeader(fileSize, headerSize); err != nil {
+		return err
 	}
-
-	// --- BITMAPINFOHEADER (40 bytes) ---
-	infoHeader := make([]byte, 40)
-	binary.LittleEndian.PutUint32(infoHeader[0:4], 40) // biSize
-	binary.LittleEndian.PutUint32(infoHeader[4:8], uint32(b.info.Width))
-	binary.LittleEndian.PutUint32(infoHeader[8:12], uint32(b.info.Height))
-	binary.LittleEndian.PutUint16(infoHeader[12:14], 1)            // biPlanes
-	binary.LittleEndian.PutUint16(infoHeader[14:16], uint16(bitsPerPixel))
-	// biCompression = 0 (BI_RGB)
-	// biSizeImage = 0 (correct for uncompressed)
-	if b.info.DensityUnit == 2 { // dots/cm -> dots/meter
-		binary.LittleEndian.PutUint32(infoHeader[24:28], uint32(b.info.XDensity)*100)
-		binary.LittleEndian.PutUint32(infoHeader[28:32], uint32(b.info.YDensity)*100)
-	}
-	binary.LittleEndian.PutUint32(infoHeader[32:36], uint32(cmapEntries))
-
-	if _, err := b.w.Write(infoHeader); err != nil {
-		return fmt.Errorf("bmp: writing info header: %w", err)
+	if b.os2 {
+		if err := b.writeOS2CoreHeader(bitsPerPixel); err != nil {
+			return err
+		}
+	} else if err := b.writeWindowsInfoHeader(bitsPerPixel, cmapEntries); err != nil {
+		return err
 	}
 
 	// --- Color table (if needed) ---
 	if cmapEntries > 0 {
-		if err := b.writeColormap(cmapEntries); err != nil {
+		if err := b.writeColormap(cmapEntries, colorEntrySize); err != nil {
 			return err
 		}
 	}
@@ -164,9 +135,70 @@ func (b *bmpWriter) Finish() error {
 	return nil
 }
 
-// writeColormap writes the BMP color table (BGR0 format for Windows BMP).
-func (b *bmpWriter) writeColormap(cmapEntries int) error {
-	entry := make([]byte, 4) // B, G, R, 0
+func (b *bmpWriter) headerLayout() (bitsPerPixel, cmapEntries int) {
+	switch b.info.ColorSpace {
+	case ColorSpaceGrayscale:
+		return 8, 256
+	case ColorSpaceRGB:
+		if b.info.QuantizeColors {
+			return 8, 256
+		}
+		return 24, 0
+	default:
+		return 0, 0
+	}
+}
+
+func (b *bmpWriter) writeFileHeader(fileSize, pixelOffset uint32) error {
+	fileHeader := make([]byte, 14)
+	fileHeader[0] = 'B'
+	fileHeader[1] = 'M'
+	binary.LittleEndian.PutUint32(fileHeader[2:6], fileSize)
+	// bfReserved1, bfReserved2 = 0
+	binary.LittleEndian.PutUint32(fileHeader[10:14], pixelOffset)
+	if _, err := b.w.Write(fileHeader); err != nil {
+		return fmt.Errorf("bmp: writing file header: %w", err)
+	}
+	return nil
+}
+
+func (b *bmpWriter) writeWindowsInfoHeader(bitsPerPixel, cmapEntries int) error {
+	infoHeader := make([]byte, 40)
+	binary.LittleEndian.PutUint32(infoHeader[0:4], 40) // biSize
+	binary.LittleEndian.PutUint32(infoHeader[4:8], uint32(b.info.Width))
+	binary.LittleEndian.PutUint32(infoHeader[8:12], uint32(b.info.Height))
+	binary.LittleEndian.PutUint16(infoHeader[12:14], 1) // biPlanes
+	binary.LittleEndian.PutUint16(infoHeader[14:16], uint16(bitsPerPixel))
+	// biCompression = 0 (BI_RGB)
+	// biSizeImage = 0 (correct for uncompressed)
+	if b.info.DensityUnit == 2 { // dots/cm -> dots/meter
+		binary.LittleEndian.PutUint32(infoHeader[24:28], uint32(b.info.XDensity)*100)
+		binary.LittleEndian.PutUint32(infoHeader[28:32], uint32(b.info.YDensity)*100)
+	}
+	binary.LittleEndian.PutUint32(infoHeader[32:36], uint32(cmapEntries))
+	if _, err := b.w.Write(infoHeader); err != nil {
+		return fmt.Errorf("bmp: writing info header: %w", err)
+	}
+	return nil
+}
+
+func (b *bmpWriter) writeOS2CoreHeader(bitsPerPixel int) error {
+	coreHeader := make([]byte, 12)
+	binary.LittleEndian.PutUint32(coreHeader[0:4], 12) // bcSize
+	binary.LittleEndian.PutUint16(coreHeader[4:6], uint16(b.info.Width))
+	binary.LittleEndian.PutUint16(coreHeader[6:8], uint16(b.info.Height))
+	binary.LittleEndian.PutUint16(coreHeader[8:10], 1) // bcPlanes
+	binary.LittleEndian.PutUint16(coreHeader[10:12], uint16(bitsPerPixel))
+	if _, err := b.w.Write(coreHeader); err != nil {
+		return fmt.Errorf("bmp: writing OS/2 core header: %w", err)
+	}
+	return nil
+}
+
+// writeColormap writes the BMP color table. Windows entries are BGR0; OS/2
+// entries are BGR.
+func (b *bmpWriter) writeColormap(cmapEntries, entrySize int) error {
+	entry := make([]byte, entrySize)
 
 	if b.info.QuantizeColors && b.info.Colormap != nil {
 		cm := b.info.Colormap
@@ -184,7 +216,6 @@ func (b *bmpWriter) writeColormap(cmapEntries int) error {
 				entry[0] = v
 				entry[1] = v
 				entry[2] = v
-				entry[3] = 0
 				if _, err := b.w.Write(entry); err != nil {
 					return fmt.Errorf("bmp: writing colormap: %w", err)
 				}
@@ -204,7 +235,6 @@ func (b *bmpWriter) writeColormap(cmapEntries int) error {
 					entry[1] = 128
 					entry[2] = 128
 				}
-				entry[3] = 0
 				if _, err := b.w.Write(entry); err != nil {
 					return fmt.Errorf("bmp: writing colormap: %w", err)
 				}
@@ -217,7 +247,6 @@ func (b *bmpWriter) writeColormap(cmapEntries int) error {
 			entry[0] = v
 			entry[1] = v
 			entry[2] = v
-			entry[3] = 0
 			if _, err := b.w.Write(entry); err != nil {
 				return fmt.Errorf("bmp: writing colormap: %w", err)
 			}

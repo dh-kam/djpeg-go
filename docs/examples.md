@@ -229,6 +229,12 @@ Write BMP:
 ./dist/djpeg-linux-amd64-debug --bmp --outfile output.bmp input.jpg
 ```
 
+Write OS/2 1.x BMP:
+
+```bash
+./dist/djpeg-linux-amd64-debug --os2 --outfile output.bmp input.jpg
+```
+
 Write Targa:
 
 ```bash

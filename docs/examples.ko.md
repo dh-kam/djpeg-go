@@ -229,6 +229,12 @@ BMP 출력:
 ./dist/djpeg-linux-amd64-debug --bmp --outfile output.bmp input.jpg
 ```
 
+OS/2 1.x BMP 출력:
+
+```bash
+./dist/djpeg-linux-amd64-debug --os2 --outfile output.bmp input.jpg
+```
+
 Targa 출력:
 
 ```bash

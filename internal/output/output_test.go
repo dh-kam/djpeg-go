@@ -11,6 +11,7 @@ func TestNewWriter(t *testing.T) {
 	formats := []Format{
 		FormatPPM,
 		FormatBMP,
+		FormatBMPOS2,
 		FormatGIF,
 		FormatGIF0,
 		FormatTarga,

@@ -65,12 +65,13 @@ type Writer interface {
 type Format string
 
 const (
-	FormatPPM   Format = "ppm"
-	FormatBMP   Format = "bmp"
-	FormatGIF   Format = "gif"
-	FormatGIF0  Format = "gif0"
-	FormatTarga Format = "targa"
-	FormatRLE   Format = "rle"
+	FormatPPM    Format = "ppm"
+	FormatBMP    Format = "bmp"
+	FormatBMPOS2 Format = "os2"
+	FormatGIF    Format = "gif"
+	FormatGIF0   Format = "gif0"
+	FormatTarga  Format = "targa"
+	FormatRLE    Format = "rle"
 )
 
 // NewWriter creates a Writer for the requested output format.
@@ -80,6 +81,8 @@ func NewWriter(f Format) (Writer, error) {
 		return &ppmWriter{}, nil
 	case FormatBMP:
 		return &bmpWriter{}, nil
+	case FormatBMPOS2:
+		return &bmpWriter{os2: true}, nil
 	case FormatGIF:
 		return &gifWriter{}, nil
 	case FormatGIF0:

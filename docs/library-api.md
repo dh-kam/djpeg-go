@@ -976,9 +976,9 @@ decoding. Progressive headers can be inspected through `ReadHeader` and
 | `--input-colorspace big-gamut-rgb` | `libjpeg.WithInputColorSpace(libjpeg.InputBigGamutRGB)` |
 | `--input-colorspace big-gamut-ycbcr` | `libjpeg.WithInputColorSpace(libjpeg.InputBigGamutYCbCr)` |
 
-CLI output flags such as `--ppm`, `--bmp`, `--targa`, `--rle`, `--gif`, and
-`--gif0` are not part of the public decode facade yet. Use `DecodeRaster` and
-write your desired output format in application code.
+CLI output flags such as `--ppm`, `--bmp`, `--os2`, `--targa`, `--rle`,
+`--gif`, and `--gif0` are not part of the public decode facade yet. Use
+`DecodeRaster` and write your desired output format in application code.
 
 The `cmd/djpeg` output writers currently accept Gray8 and RGB24 rasters. Other
 `--output-colorspace` values are exposed for parity/debugging and library API

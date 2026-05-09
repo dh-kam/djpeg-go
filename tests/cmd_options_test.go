@@ -2,6 +2,7 @@ package djpeggo_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"image/gif"
 	"os"
@@ -365,6 +366,37 @@ func TestGIF0OutputAutoQuantizesRGB(t *testing.T) {
 	}
 	if len(gifData) < 6 || string(gifData[:6]) != "GIF87a" {
 		t.Fatalf("GIF0 header = %q, want GIF87a", gifData[:min(len(gifData), 6)])
+	}
+}
+
+func TestOS2BMPOutputWritesCoreHeader(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile("testdata/test_420.jpg")
+	if err != nil {
+		t.Skip("test_420.jpg not available:", err)
+	}
+
+	bmp := decompressForOptionTest(t, data, &djpegcli.Options{
+		Format: output.FormatBMPOS2,
+	})
+	if len(bmp) < 26 {
+		t.Fatalf("OS/2 BMP output length = %d, want at least 26", len(bmp))
+	}
+	if string(bmp[:2]) != "BM" {
+		t.Fatalf("OS/2 BMP signature = %q, want BM", bmp[:2])
+	}
+	if offset := binary.LittleEndian.Uint32(bmp[10:14]); offset != 26 {
+		t.Fatalf("OS/2 BMP pixel offset = %d, want 26", offset)
+	}
+	if headerSize := binary.LittleEndian.Uint32(bmp[14:18]); headerSize != 12 {
+		t.Fatalf("OS/2 BMP core header size = %d, want 12", headerSize)
+	}
+	if width := binary.LittleEndian.Uint16(bmp[18:20]); width != 256 {
+		t.Fatalf("OS/2 BMP width = %d, want 256", width)
+	}
+	if bitCount := binary.LittleEndian.Uint16(bmp[24:26]); bitCount != 24 {
+		t.Fatalf("OS/2 BMP bit count = %d, want 24", bitCount)
 	}
 }
 
