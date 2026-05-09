@@ -1671,12 +1671,12 @@ func TestDecoderCalcOutputDimensions(t *testing.T) {
 		t.Fatalf("CalcOutputDimensions header fields = image %dx%d precision %d, want 8x8 precision 8",
 			cfg.ImageWidth, cfg.ImageHeight, cfg.DataPrecision)
 	}
-	if cfg.MaxHSampFactor != 1 || cfg.MaxVSampFactor != 1 || cfg.MinDCTHScaledSize != 8 || cfg.MinDCTVScaledSize != 8 {
-		t.Fatalf("CalcOutputDimensions sampling fields = max %dx%d minDCT %dx%d, want 1x1 and 8x8",
+	if cfg.MaxHSampFactor != 1 || cfg.MaxVSampFactor != 1 || cfg.MinDCTHScaledSize != 4 || cfg.MinDCTVScaledSize != 4 {
+		t.Fatalf("CalcOutputDimensions sampling fields = max %dx%d minDCT %dx%d, want 1x1 and 4x4",
 			cfg.MaxHSampFactor, cfg.MaxVSampFactor, cfg.MinDCTHScaledSize, cfg.MinDCTVScaledSize)
 	}
-	if cfg.BlockSize != 8 || cfg.ScaleNum != 8 || cfg.ScaleDenom != 8 {
-		t.Fatalf("CalcOutputDimensions block/scale = block %d scale %d/%d, want 8 and marker scale 8/8",
+	if cfg.BlockSize != 8 || cfg.ScaleNum != 4 || cfg.ScaleDenom != 8 {
+		t.Fatalf("CalcOutputDimensions block/scale = block %d scale %d/%d, want 8 and marker scale 4/8",
 			cfg.BlockSize, cfg.ScaleNum, cfg.ScaleDenom)
 	}
 	if cfg.RecOutbufHeight != 1 {

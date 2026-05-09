@@ -169,9 +169,8 @@ Scale output by a libjpeg-style `M/N` fraction:
 ```
 
 For 8x8 DCT JPEGs, ratios map to the closest supported scale size from `1/8`
-through `16/8`. The current implementation decodes first and then resamples the
-output raster, so dimensions follow libjpeg's scale grid but pixels are not
-intended to be scaled-IDCT exact.
+through `16/8`. Scaling is applied in the decoder's scaled-IDCT output path, so
+scanline and file output use the same scaled dimensions.
 
 ## Color Quantization
 

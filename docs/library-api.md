@@ -269,8 +269,9 @@ scan data and component buffers. CLI-style values can be parsed with
 `libjpeg.ParseMemoryLimit("20m")`; bare numbers are kilobytes, matching libjpeg.
 
 `WithScale` applies libjpeg-style output scaling. For 8x8 DCT JPEGs, ratios map
-to the closest supported scale size from `1/8` through `16/8`. The current
-implementation decodes first and then resamples the output raster.
+to the closest supported scale size from `1/8` through `16/8`. The decoder uses
+the libjpeg-style scaled-IDCT output path for both raster and raw component
+output.
 
 `WithOutputGamma` and `WithBlockSmoothing` mirror libjpeg decompressor
 parameters. Block smoothing affects progressive output passes once progressive
@@ -920,8 +921,8 @@ full image to be consumed.
 
 This API is scanline-oriented but not a bounded-memory streaming contract. It
 exists so callers can avoid building a second full output image while writing
-to another format. `WithScale` currently buffers and resamples the full output
-raster before serving scaled scanlines.
+to another format. `WithScale` is applied by the decoder before scanlines are
+served.
 
 ## Error Handling
 

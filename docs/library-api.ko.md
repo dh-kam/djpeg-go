@@ -266,7 +266,8 @@ space와 일치할 때만 지원합니다.
 
 `WithScale`은 libjpeg 스타일 output scaling을 적용합니다. 8x8 DCT JPEG에서는
 ratio가 `1/8`부터 `16/8`까지의 지원 scale grid 중 가까운 값으로 매핑됩니다.
-현재 구현은 먼저 decode한 뒤 output raster를 resampling합니다.
+decoder는 raster와 raw component output 모두에서 libjpeg 스타일 scaled-IDCT
+output 경로를 사용합니다.
 
 `WithOutputGamma`와 `WithBlockSmoothing`은 libjpeg decompressor parameter에
 대응합니다. Block smoothing은 progressive output pass에서 의미가 있으며,
@@ -912,8 +913,7 @@ scanline cursor를 전진시키고, 이미지 하단에서 멈추며, 실제로 
 
 이 API는 scanline-oriented API이지만 bounded-memory streaming 계약은 아닙니다.
 다른 포맷으로 쓰는 동안 두 번째 전체 output image를 만들지 않기 위한 용도로
-제공합니다. `WithScale`은 현재 full output raster를 buffering하고 resampling한 뒤
-scaled scanline을 제공합니다.
+제공합니다. `WithScale`은 scanline이 반환되기 전에 decoder 내부에서 적용됩니다.
 
 ## Error Handling
 

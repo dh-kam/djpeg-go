@@ -169,9 +169,8 @@ libjpeg 스타일 `M/N` fraction으로 output을 scaling합니다.
 ```
 
 8x8 DCT JPEG에서는 ratio가 `1/8`부터 `16/8`까지의 지원 scale grid 중 가까운
-값으로 매핑됩니다. 현재 구현은 먼저 decode한 뒤 output raster를 resampling하므로
-dimension은 libjpeg scale grid를 따르지만, pixel 값까지 scaled-IDCT exact를
-목표로 하지는 않습니다.
+값으로 매핑됩니다. Scaling은 decoder의 scaled-IDCT output 경로에서 적용되므로
+scanline과 file output은 같은 scaled dimension을 사용합니다.
 
 ## Color Quantization
 

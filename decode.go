@@ -362,8 +362,14 @@ func (d *Decoder) Start() error {
 	}
 	d.populateHeaderMetadata(&baseOutput)
 	d.output = baseOutput
-	if err := d.applyScaleToConfig(&d.output); err != nil {
+	scaleHandledByDecoder, err := d.scaleHandledByDecoder()
+	if err != nil {
 		return err
+	}
+	if !scaleHandledByDecoder {
+		if err := d.applyScaleToConfig(&d.output); err != nil {
+			return err
+		}
 	}
 	if d.output.Width != baseOutput.Width || d.output.Height != baseOutput.Height {
 		scaled, err := d.readAndScaleStartedDecoder(baseOutput, d.output.Width, d.output.Height)
@@ -438,8 +444,14 @@ func (d *Decoder) CalcOutputDimensions() (Config, error) {
 		cfg.InputColorSpace = d.header.InputColorSpace
 	}
 	d.populateHeaderMetadata(&cfg)
-	if err := d.applyScaleToConfig(&cfg); err != nil {
+	scaleHandledByDecoder, err := d.scaleHandledByDecoder()
+	if err != nil {
 		return Config{}, err
+	}
+	if !scaleHandledByDecoder {
+		if err := d.applyScaleToConfig(&cfg); err != nil {
+			return Config{}, err
+		}
 	}
 	if err := d.applyQuantizationToConfig(&cfg); err != nil {
 		return Config{}, err
@@ -1383,11 +1395,11 @@ func (d *Decoder) applyOptions() error {
 }
 
 func (d *Decoder) applyDecompressionParameters() error {
-	if d.opts.RawDataOut {
-		scale, _, err := d.opts.scaleSize()
-		if err != nil {
-			return err
-		}
+	scale, enabled, err := d.opts.scaleSize()
+	if err != nil {
+		return err
+	}
+	if enabled {
 		d.dec.SetScale(uint(scale), 8)
 	}
 	if d.opts.OutputGamma != 0 {
@@ -1629,6 +1641,11 @@ func (d *Decoder) applyOutputColorSpaceToConfig(cfg *Config) error {
 	cfg.Components = cfg.PixelFormat.Channels()
 	cfg.Stride = cfg.Width * cfg.Components
 	return nil
+}
+
+func (d *Decoder) scaleHandledByDecoder() (bool, error) {
+	_, enabled, err := d.opts.scaleSize()
+	return enabled, err
 }
 
 func (d *Decoder) applyScaleToConfig(cfg *Config) error {
