@@ -1910,8 +1910,30 @@ func TestDecoderExposesDACArithmeticMetadata(t *testing.T) {
 	if scan := dec.ScanParameters(); scan.SpectralStart != 0 || scan.SpectralEnd != 63 {
 		t.Fatalf("arithmetic scan params = %+v, want 0..63", scan)
 	}
-	if err := dec.StartDecompress(); !errors.Is(err, djpeg.ErrUnsupported) {
-		t.Fatalf("StartDecompress arithmetic error = %v, want ErrUnsupported", err)
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress arithmetic failed: %v", err)
+	}
+	out := dec.OutputConfig()
+	if out.PixelFormat != djpeg.PixelFormatGray8 || out.Width != 8 || out.Height != 8 {
+		t.Fatalf("arithmetic output config = %+v, want 8x8 gray", out)
+	}
+	row := make([]byte, out.Stride)
+	for dec.OutputScanline() < out.Height {
+		n, err := dec.ReadScanlines([][]byte{row})
+		if err != nil {
+			t.Fatalf("ReadScanlines arithmetic failed: %v", err)
+		}
+		if n == 0 {
+			t.Fatal("ReadScanlines arithmetic returned 0 before image end")
+		}
+		for x, sample := range row {
+			if sample != 128 {
+				t.Fatalf("arithmetic row sample[%d] = %d, want 128", x, sample)
+			}
+		}
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress arithmetic failed: %v", err)
 	}
 }
 

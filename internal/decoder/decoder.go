@@ -28,6 +28,9 @@ type Decoder struct {
 
 	dcTables      []*huff.DerivedHuffTable
 	acTables      []*huff.DerivedHuffTable
+	arithDecoder  *huff.ArithDecoder
+	arithCompInfo []huff.ComponentInfo
+	arithSrcPos   int
 	mcuMembership []int
 
 	idctMethod huff.IDCTMethod
@@ -315,6 +318,9 @@ func (dec *Decoder) Abort() {
 	dec.unreadMarker = 0
 	dec.dcTables = nil
 	dec.acTables = nil
+	dec.arithDecoder = nil
+	dec.arithCompInfo = nil
+	dec.arithSrcPos = 0
 	dec.mcuMembership = nil
 	dec.multTablesISlow = nil
 	dec.multTablesIFast = nil
@@ -391,9 +397,6 @@ func (dec *Decoder) ReadHeader() (int, int, int, marker.ColorSpace, error) {
 	if dec.d.IsProgressive() {
 		return 0, 0, 0, 0, errors.New("jpeg: progressive JPEG not yet supported")
 	}
-	if dec.d.ArithCodeFlag {
-		return 0, 0, 0, 0, errors.New("jpeg: arithmetic coding not supported")
-	}
 	dec.applyInputColorSpaceOverride()
 	dec.applyOutputColorSpaceOverride()
 	dec.applyColorTransformOverride()
@@ -424,7 +427,7 @@ func (dec *Decoder) StartDecompress() error {
 	if err := d.StartInputPass(); err != nil {
 		return err
 	}
-	if err := dec.buildHuffmanTables(); err != nil {
+	if err := dec.prepareEntropyDecoder(); err != nil {
 		return err
 	}
 	dec.buildQuantTables()
@@ -457,7 +460,7 @@ func (dec *Decoder) StartDecompress() error {
 	if err := dec.readAllScanData(); err != nil {
 		return err
 	}
-	huff.InitBitReader(&dec.workState, dec.scanData)
+	dec.resetEntropyInput()
 	if err := d.StartDecompress(); err != nil {
 		return err
 	}
@@ -599,9 +602,6 @@ func (dec *Decoder) ReadCoefficients() ([]CoefficientComponent, error) {
 	if d.IsProgressive() {
 		return nil, errors.New("jpeg: progressive coefficient decoding not yet supported")
 	}
-	if d.ArithCodeFlag {
-		return nil, errors.New("jpeg: arithmetic coefficient decoding not supported")
-	}
 
 	dec.memoryUsed = 0
 	dec.applyInputColorSpaceOverride()
@@ -610,7 +610,7 @@ func (dec *Decoder) ReadCoefficients() ([]CoefficientComponent, error) {
 	if err := d.StartInputPass(); err != nil {
 		return nil, err
 	}
-	if err := dec.buildHuffmanTables(); err != nil {
+	if err := dec.prepareEntropyDecoder(); err != nil {
 		return nil, err
 	}
 	dec.restartsToGo = int(d.RestartInterval)
@@ -626,7 +626,7 @@ func (dec *Decoder) ReadCoefficients() ([]CoefficientComponent, error) {
 	if err := dec.readAllScanData(); err != nil {
 		return nil, err
 	}
-	huff.InitBitReader(&dec.workState, dec.scanData)
+	dec.resetEntropyInput()
 
 	out, err := dec.allocCoefficientComponents()
 	if err != nil {
@@ -684,14 +684,21 @@ func (dec *Decoder) decodeCoefficientMCURow(out []CoefficientComponent) error {
 				dec.unreadMarker = 0
 				dec.insufficient = false
 				dec.restartsToGo = int(d.RestartInterval)
+				if d.ArithCodeFlag {
+					dec.resetArithmeticStats()
+				}
 			}
 			dec.restartsToGo--
 		}
-		_ = huff.DecodeMCUSequential(
-			&dec.workState, &dec.permState, &dec.savedState, blocks,
-			dec.dcTables, dec.acTables, blocksInMCU, dec.mcuMembership,
-			0, &dec.restartsToGo, &dec.insufficient, &dec.unreadMarker,
-		)
+		if d.ArithCodeFlag {
+			dec.decodeArithmeticMCU(blocks)
+		} else {
+			_ = huff.DecodeMCUSequential(
+				&dec.workState, &dec.permState, &dec.savedState, blocks,
+				dec.dcTables, dec.acTables, blocksInMCU, dec.mcuMembership,
+				0, &dec.restartsToGo, &dec.insufficient, &dec.unreadMarker,
+			)
+		}
 		dec.routeCoefficientBlocks(out, blocks, mcuCol)
 	}
 	return nil
@@ -1015,14 +1022,21 @@ func (dec *Decoder) decodeIMCURow() {
 				dec.unreadMarker = 0
 				dec.insufficient = false
 				dec.restartsToGo = int(d.RestartInterval)
+				if d.ArithCodeFlag {
+					dec.resetArithmeticStats()
+				}
 			}
 			dec.restartsToGo--
 		}
-		_ = huff.DecodeMCUSequential(
-			&dec.workState, &dec.permState, &dec.savedState, blocks,
-			dec.dcTables, dec.acTables, blocksInMCU, dec.mcuMembership,
-			0, &dec.restartsToGo, &dec.insufficient, &dec.unreadMarker,
-		)
+		if d.ArithCodeFlag {
+			dec.decodeArithmeticMCU(blocks)
+		} else {
+			_ = huff.DecodeMCUSequential(
+				&dec.workState, &dec.permState, &dec.savedState, blocks,
+				dec.dcTables, dec.acTables, blocksInMCU, dec.mcuMembership,
+				0, &dec.restartsToGo, &dec.insufficient, &dec.unreadMarker,
+			)
+		}
 		dec.routeBlocks(blocks, mcuCol)
 	}
 }
@@ -1662,6 +1676,115 @@ func clampIndex(idx, length int) int {
 		return length - 1
 	}
 	return idx
+}
+
+func (dec *Decoder) prepareEntropyDecoder() error {
+	if dec.d.ArithCodeFlag {
+		return dec.initArithmeticDecoder()
+	}
+	return dec.buildHuffmanTables()
+}
+
+func (dec *Decoder) initArithmeticDecoder() error {
+	d := dec.d
+	for ci := 0; ci < d.CompsInScan; ci++ {
+		comp := d.CurCompInfo[ci]
+		if comp == nil {
+			return errors.New("jpeg: missing arithmetic component")
+		}
+		if comp.DCTblNo < 0 || comp.DCTblNo >= huff.NumArithTbls ||
+			comp.ACTblNo < 0 || comp.ACTblNo >= huff.NumArithTbls {
+			return errors.New("jpeg: unsupported arithmetic table selector")
+		}
+	}
+	dec.arithDecoder = huff.NewArithDecoder()
+	dec.arithCompInfo = dec.currentArithmeticComponents()
+	dec.arithDecoder.InitPass(
+		d.ProgressiveMode,
+		d.CompsInScan,
+		dec.arithCompInfo,
+		d.LimSe,
+		d.Ss,
+		d.Se,
+		d.Ah,
+		d.Al,
+	)
+	return nil
+}
+
+func (dec *Decoder) currentArithmeticComponents() []huff.ComponentInfo {
+	d := dec.d
+	components := make([]huff.ComponentInfo, d.CompsInScan)
+	for ci := 0; ci < d.CompsInScan; ci++ {
+		comp := d.CurCompInfo[ci]
+		if comp == nil {
+			continue
+		}
+		components[ci] = huff.ComponentInfo{
+			DCTblNo: comp.DCTblNo,
+			ACTblNo: comp.ACTblNo,
+		}
+	}
+	return components
+}
+
+func (dec *Decoder) resetEntropyInput() {
+	if dec.d.ArithCodeFlag {
+		dec.arithSrcPos = 0
+		dec.unreadMarker = 0
+		return
+	}
+	huff.InitBitReader(&dec.workState, dec.scanData)
+}
+
+func (dec *Decoder) resetArithmeticStats() {
+	if dec.arithDecoder == nil {
+		return
+	}
+	dec.arithDecoder.ResetStats(
+		dec.d.CompsInScan,
+		dec.arithCompInfo,
+		dec.d.ProgressiveMode,
+		dec.d.Ss,
+		dec.d.Ah,
+		dec.d.LimSe,
+	)
+}
+
+func (dec *Decoder) decodeArithmeticMCU(blocks []huff.Block) {
+	if dec.arithDecoder == nil {
+		return
+	}
+	var dcL, dcU [huff.NumArithTbls]uint8
+	var acK [huff.NumArithTbls]int
+	for i := 0; i < huff.NumArithTbls; i++ {
+		dcL[i] = dec.d.ArithDCL[i]
+		dcU[i] = dec.d.ArithDCU[i]
+		acK[i] = int(dec.d.ArithACK[i])
+	}
+	dec.arithDecoder.DecodeMCUSequential(
+		blocks,
+		dec.d.BlocksInMCU,
+		dec.mcuMembership,
+		dec.arithCompInfo,
+		dec.d.Ss,
+		dec.d.Se,
+		dec.d.LimSe,
+		dcL,
+		dcU,
+		acK,
+		dec.nextArithmeticByte,
+		&dec.unreadMarker,
+	)
+}
+
+func (dec *Decoder) nextArithmeticByte() byte {
+	if dec.arithSrcPos >= len(dec.scanData) {
+		return 0
+	}
+	b := dec.scanData[dec.arithSrcPos]
+	dec.arithSrcPos++
+	return b
 }
 
 func (dec *Decoder) buildHuffmanTables() error {

@@ -394,8 +394,8 @@ if err != nil {
 _ = components
 ```
 
-Progressive와 arithmetic-coded coefficient decoding은 아직 `ErrUnsupported`로
-보고됩니다.
+Progressive coefficient decoding은 아직 `ErrUnsupported`로 보고됩니다.
+Sequential arithmetic-coded coefficient decoding은 지원합니다.
 
 ## Raw Component Output
 
@@ -928,7 +928,7 @@ if err != nil {
 _ = img
 ```
 
-현재 progressive JPEG와 arithmetic-coded JPEG는 지원하지 않습니다.
+현재 progressive JPEG는 지원하지 않습니다.
 
 ## CLI Flag와 API Option 대응
 
@@ -976,8 +976,9 @@ import libjpeg "github.com/dh-kam/djpeg-go"
 
 ## Compatibility Notes
 
-- baseline, non-progressive JPEG가 지원 경로입니다.
-- progressive JPEG와 arithmetic-coded JPEG는 `ErrUnsupported`를 반환합니다.
+- baseline 및 extended sequential non-progressive JPEG가 지원 경로이며,
+  Huffman과 arithmetic entropy coding을 지원합니다.
+- progressive JPEG는 `ErrUnsupported`를 반환합니다.
 - `Decode`는 `image.Image` interface 뒤에 `*Raster`를 반환합니다. RGBA allocation을
   강제하지 않으면서 raw byte 접근을 유지하기 위한 선택입니다.
 - package는 `image.RegisterFormat`를 자동 호출하지 않습니다. 이 decoder의 parity

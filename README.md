@@ -12,8 +12,9 @@ performance testing.
 
 ## Status
 
-- Baseline, non-progressive JPEG decoding is the primary supported path.
-- Arithmetic-coded and progressive JPEG files are currently rejected.
+- Baseline and extended sequential non-progressive JPEG decoding are the
+  primary supported paths, including Huffman and arithmetic entropy coding.
+- Progressive JPEG files are currently rejected.
 - PPM/PGM output is the most thoroughly verified CLI output path.
 - BMP, Targa, RLE, and limited GIF writer code exists, but exact parity is
   currently measured against PPM/PGM output.

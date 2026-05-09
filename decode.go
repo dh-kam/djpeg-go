@@ -345,9 +345,6 @@ func (d *Decoder) Start() error {
 	if d.dec.IsProgressive() {
 		return wrapDecodeError("start decompress", fmt.Errorf("jpeg: progressive JPEG not yet supported"))
 	}
-	if d.dec.IsArithmetic() {
-		return wrapDecodeError("start decompress", fmt.Errorf("jpeg: arithmetic coding not supported"))
-	}
 	if err := d.dec.StartDecompress(); err != nil {
 		return wrapDecodeError("start decompress", err)
 	}
@@ -607,9 +604,6 @@ func (d *Decoder) ReadCoefficients() ([]CoefficientComponent, error) {
 	}
 	if d.dec.IsProgressive() {
 		return nil, wrapDecodeError("read coefficients", fmt.Errorf("jpeg: progressive coefficient decoding not yet supported"))
-	}
-	if d.dec.IsArithmetic() {
-		return nil, wrapDecodeError("read coefficients", fmt.Errorf("jpeg: arithmetic coefficient decoding not supported"))
 	}
 	d.reportProgress(0, d.header.Height)
 	internal, err := d.dec.ReadCoefficients()

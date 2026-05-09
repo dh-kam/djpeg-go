@@ -399,8 +399,8 @@ if err != nil {
 _ = components
 ```
 
-Progressive and arithmetic-coded coefficient decoding are still reported as
-`ErrUnsupported`.
+Progressive coefficient decoding is still reported as `ErrUnsupported`.
+Sequential arithmetic-coded coefficient decoding is supported.
 
 ## Raw Component Output
 
@@ -937,8 +937,7 @@ if err != nil {
 _ = img
 ```
 
-Currently unsupported JPEG features include progressive JPEG and arithmetic
-coding.
+Currently unsupported JPEG features include progressive JPEG.
 
 ## Mapping CLI Flags to API Options
 
@@ -986,8 +985,9 @@ package rules for external consumers.
 
 ## Compatibility Notes
 
-- Baseline, non-progressive JPEG is the supported path.
-- Progressive and arithmetic-coded JPEGs return `ErrUnsupported`.
+- Baseline and extended sequential non-progressive JPEGs are the supported
+  paths, including Huffman and arithmetic entropy coding.
+- Progressive JPEGs return `ErrUnsupported`.
 - `Decode` returns a `*Raster` behind the `image.Image` interface. This keeps
   raw bytes available without forcing an RGBA allocation.
 - The package does not call `image.RegisterFormat` automatically. Use

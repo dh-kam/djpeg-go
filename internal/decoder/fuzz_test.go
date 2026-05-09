@@ -198,8 +198,8 @@ func TestDecoderProgressiveReject(t *testing.T) {
 	}
 }
 
-// TestDecoderArithmeticReject tests that arithmetic coding JPEG is rejected.
-func TestDecoderArithmeticReject(t *testing.T) {
+// TestDecoderArithmeticSequential tests baseline sequential arithmetic JPEG.
+func TestDecoderArithmeticSequential(t *testing.T) {
 	var buf bytes.Buffer
 	buf.Write([]byte{0xFF, 0xD8})
 	buf.Write([]byte{0xFF, 0xDB})
@@ -229,9 +229,34 @@ func TestDecoderArithmeticReject(t *testing.T) {
 	buf.Write([]byte{0xFF, 0xD9})
 
 	dec := New(bytes.NewReader(buf.Bytes()))
-	_, _, _, _, err := dec.ReadHeader()
-	if err == nil {
-		t.Error("expected error for arithmetic coding JPEG")
+	w, h, comps, _, err := dec.ReadHeader()
+	if err != nil {
+		t.Fatalf("ReadHeader arithmetic failed: %v", err)
+	}
+	if w != 8 || h != 8 || comps != 1 || !dec.IsArithmetic() {
+		t.Fatalf("arithmetic header width=%d height=%d comps=%d arithmetic=%v, want 8/8/1/true",
+			w, h, comps, dec.IsArithmetic())
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress arithmetic failed: %v", err)
+	}
+	row := make([]byte, dec.OutputWidth()*dec.OutputComponents())
+	for dec.OutputScanline() < dec.OutputHeight() {
+		n, err := dec.ReadScanlines([][]byte{row})
+		if err != nil {
+			t.Fatalf("ReadScanlines arithmetic failed: %v", err)
+		}
+		if n == 0 {
+			t.Fatal("ReadScanlines arithmetic returned 0 before image end")
+		}
+		for i, sample := range row {
+			if sample != 128 {
+				t.Fatalf("arithmetic sample[%d] = %d, want 128", i, sample)
+			}
+		}
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress arithmetic failed: %v", err)
 	}
 }
 
