@@ -45,6 +45,7 @@ type Options struct {
 	BufferedImage     bool
 	OutputGamma       float64
 	BlockSmoothing    BlockSmoothingMode
+	ProgressMonitor   ProgressMonitor
 }
 
 // SavedMarkerOption configures marker data retention during ReadHeader.
@@ -59,6 +60,17 @@ type MarkerProcessorOption struct {
 	Code      int
 	Processor MarkerProcessor
 }
+
+// Progress mirrors libjpeg's jpeg_progress_mgr public counters.
+type Progress struct {
+	PassCounter     int64
+	PassLimit       int64
+	CompletedPasses int
+	TotalPasses     int
+}
+
+// ProgressMonitor receives libjpeg-style decompression progress updates.
+type ProgressMonitor func(Progress)
 
 // IDCTMethod selects the inverse DCT implementation.
 type IDCTMethod int
@@ -324,6 +336,14 @@ func WithBlockSmoothing(enabled bool) Option {
 		} else {
 			opts.BlockSmoothing = BlockSmoothingDisabled
 		}
+	}
+}
+
+// WithProgressMonitor installs a libjpeg-style progress callback. The callback
+// is invoked during output reads with the current pass counter and pass limit.
+func WithProgressMonitor(monitor ProgressMonitor) Option {
+	return func(opts *Options) {
+		opts.ProgressMonitor = monitor
 	}
 }
 

@@ -1076,6 +1076,46 @@ func TestDecoderRawDataRows(t *testing.T) {
 	}
 }
 
+func TestDecoderProgressMonitor(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	var updates []djpeg.Progress
+	dec := djpeg.NewDecoder(
+		bytes.NewReader(data),
+		djpeg.WithProgressMonitor(func(progress djpeg.Progress) {
+			updates = append(updates, progress)
+		}),
+	)
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress failed: %v", err)
+	}
+	row := make([]byte, dec.OutputConfig().Stride)
+	if n, err := dec.ReadScanlines([][]byte{row}); err != nil || n != 1 {
+		t.Fatalf("ReadScanlines rows=%d err=%v, want 1 nil", n, err)
+	}
+	if skipped, err := dec.SkipScanlines(2); err != nil || skipped != 2 {
+		t.Fatalf("SkipScanlines skipped=%d err=%v, want 2 nil", skipped, err)
+	}
+	if len(updates) < 2 {
+		t.Fatalf("progress updates = %d, want at least 2", len(updates))
+	}
+	if updates[0].PassCounter != 0 || updates[0].PassLimit != int64(dec.OutputConfig().Height) ||
+		updates[0].CompletedPasses != 0 || updates[0].TotalPasses != 1 {
+		t.Fatalf("first progress update = %+v, want counter 0 limit %d passes 0/1",
+			updates[0], dec.OutputConfig().Height)
+	}
+	if updates[1].PassCounter != 1 || updates[1].PassLimit != int64(dec.OutputConfig().Height) {
+		t.Fatalf("second progress update = %+v, want counter 1 limit %d",
+			updates[1], dec.OutputConfig().Height)
+	}
+}
+
 func TestDecodeRawComponentsInvalidOptions(t *testing.T) {
 	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
 	if err != nil {

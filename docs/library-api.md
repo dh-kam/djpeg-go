@@ -707,6 +707,7 @@ opts := &libjpeg.Options{
 	RawDataOut:        false,
 	OutputGamma:       1.0,
 	BlockSmoothing:    libjpeg.BlockSmoothingDefault,
+	ProgressMonitor:   nil,
 }
 
 raster, err := libjpeg.DecodeRasterWithOptions(r, opts)
@@ -718,6 +719,21 @@ CLI-style strings can be parsed with:
 idct, err := libjpeg.ParseIDCTMethod("int")
 space, err := libjpeg.ParseInputColorSpace("rgb")
 dither, err := libjpeg.ParseDitherMode("fs")
+```
+
+## Progress Monitor
+
+`WithProgressMonitor` mirrors libjpeg's `jpeg_progress_mgr` counters at the
+facade level. The callback is invoked during scanline, raw-data, and
+coefficient reads.
+
+```go
+dec := libjpeg.NewDecoder(r, libjpeg.WithProgressMonitor(func(p libjpeg.Progress) {
+	_ = p.PassCounter
+	_ = p.PassLimit
+	_ = p.CompletedPasses
+	_ = p.TotalPasses
+}))
 ```
 
 ## Scanline API

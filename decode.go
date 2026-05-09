@@ -465,6 +465,7 @@ func (d *Decoder) ReadScanlines(rows [][]byte) (int, error) {
 			}
 		}
 	}
+	d.reportProgress(d.OutputScanline(), cfg.Height)
 	if d.scaled != nil {
 		rowsRead := 0
 		for rowsRead < len(rows) && d.scaledNextRow < d.scaled.Rect.Dy() {
@@ -516,6 +517,7 @@ func (d *Decoder) ReadRawData() ([]RawComponent, error) {
 	if !d.started {
 		return nil, fmt.Errorf("%w: StartDecompress must be called before ReadRawData", ErrInvalidOption)
 	}
+	d.reportProgress(d.OutputScanline(), d.OutputConfig().Height)
 	internal, err := d.dec.ReadRawData()
 	if err != nil {
 		return nil, wrapDecodeError("read raw data", err)
@@ -548,6 +550,7 @@ func (d *Decoder) ReadRawDataRows(maxLines int) ([]RawComponent, int, error) {
 	if maxLines < linesPerIMCU {
 		return nil, 0, fmt.Errorf("%w: raw data maxLines=%d, want at least %d", ErrInvalidOption, maxLines, linesPerIMCU)
 	}
+	d.reportProgress(d.OutputScanline(), d.OutputConfig().Height)
 	internal, rows, err := d.dec.ReadRawDataRows(maxLines)
 	if err != nil {
 		return nil, rows, wrapDecodeError("read raw data", err)
@@ -606,6 +609,7 @@ func (d *Decoder) ReadCoefficients() ([]CoefficientComponent, error) {
 	if d.dec.IsArithmetic() {
 		return nil, wrapDecodeError("read coefficients", fmt.Errorf("jpeg: arithmetic coefficient decoding not supported"))
 	}
+	d.reportProgress(0, d.header.Height)
 	internal, err := d.dec.ReadCoefficients()
 	if err != nil {
 		return nil, wrapDecodeError("read coefficients", err)
@@ -673,6 +677,7 @@ func (d *Decoder) SkipScanlines(numLines int) (int, error) {
 	if numLines == 0 {
 		return 0, nil
 	}
+	d.reportProgress(d.OutputScanline(), d.OutputConfig().Height)
 	if d.scaled != nil {
 		remaining := d.scaled.Rect.Dy() - d.scaledNextRow
 		if numLines > remaining {
@@ -962,6 +967,27 @@ func (d *Decoder) IsProgressive() bool {
 // IsArithmetic reports whether the JPEG uses arithmetic entropy coding.
 func (d *Decoder) IsArithmetic() bool {
 	return d.dec.IsArithmetic()
+}
+
+func (d *Decoder) reportProgress(counter, limit int) {
+	if d.opts.ProgressMonitor == nil {
+		return
+	}
+	if counter < 0 {
+		counter = 0
+	}
+	if limit < 0 {
+		limit = 0
+	}
+	if limit > 0 && counter > limit {
+		counter = limit
+	}
+	d.opts.ProgressMonitor(Progress{
+		PassCounter:     int64(counter),
+		PassLimit:       int64(limit),
+		CompletedPasses: 0,
+		TotalPasses:     1,
+	})
 }
 
 func (d *Decoder) applyOptions() error {

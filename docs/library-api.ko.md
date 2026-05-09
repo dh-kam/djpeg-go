@@ -701,6 +701,7 @@ opts := &libjpeg.Options{
 	RawDataOut:        false,
 	OutputGamma:       1.0,
 	BlockSmoothing:    libjpeg.BlockSmoothingDefault,
+	ProgressMonitor:   nil,
 }
 
 raster, err := libjpeg.DecodeRasterWithOptions(r, opts)
@@ -712,6 +713,20 @@ CLI 스타일 문자열은 다음 함수로 파싱할 수 있습니다.
 idct, err := libjpeg.ParseIDCTMethod("int")
 space, err := libjpeg.ParseInputColorSpace("rgb")
 dither, err := libjpeg.ParseDitherMode("fs")
+```
+
+## Progress Monitor
+
+`WithProgressMonitor`는 facade 수준에서 libjpeg의 `jpeg_progress_mgr` counter에
+대응합니다. callback은 scanline, raw-data, coefficient read 중 호출됩니다.
+
+```go
+dec := libjpeg.NewDecoder(r, libjpeg.WithProgressMonitor(func(p libjpeg.Progress) {
+	_ = p.PassCounter
+	_ = p.PassLimit
+	_ = p.CompletedPasses
+	_ = p.TotalPasses
+}))
 ```
 
 ## Scanline API
