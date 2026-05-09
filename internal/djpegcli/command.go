@@ -26,6 +26,7 @@ var (
 type Options struct {
 	OutFile          string `flag:"outfile" usage:"Write output to NAME"`
 	Verbose          bool   `flag:"verbose" usage:"Verbose output"`
+	Debug            bool   `flag:"debug" usage:"Emit debug output"`
 	Grayscale        bool   `flag:"grayscale" usage:"Force grayscale output"`
 	ForceRGB         bool   `flag:"rgb" usage:"Force RGB output"`
 	NumColors        int    `flag:"colors" usage:"Reduce image to no more than N colors"`
@@ -45,6 +46,7 @@ type Options struct {
 	CPUProfile       string `flag:"cpuprofile" usage:"Write CPU profile to FILE"`
 
 	FmtPPM   bool `flag:"ppm" usage:"Output PPM/PGM format"`
+	FmtPNM   bool `flag:"pnm" usage:"Output PPM/PGM format"`
 	FmtBMP   bool `flag:"bmp" usage:"Output BMP format"`
 	FmtGIF   bool `flag:"gif" usage:"Output GIF format"`
 	FmtTarga bool `flag:"targa" usage:"Output Targa format"`
@@ -65,6 +67,7 @@ func NewRootCommand() *cobra.Command {
 	binder := flagsbinder.NewViperCobraFlagsBinder().
 		String("outfile", "", "Write output to NAME").
 		Bool("verbose", false, "Verbose output").
+		Bool("debug", false, "Emit debug output").
 		Bool("grayscale", false, "Force grayscale output").
 		Bool("rgb", false, "Force RGB output").
 		Int("colors", 0, "Reduce image to no more than N colors").
@@ -83,6 +86,7 @@ func NewRootCommand() *cobra.Command {
 		Bool("turbo-fancy", false, "Deprecated alias for --compatibility poppler-pdf").
 		String("cpuprofile", "", "Write CPU profile to FILE").
 		Bool("ppm", false, "Output PPM/PGM format").
+		Bool("pnm", false, "Output PPM/PGM format").
 		Bool("bmp", false, "Output BMP format").
 		Bool("gif", false, "Output GIF format").
 		Bool("targa", false, "Output Targa format").
@@ -99,6 +103,9 @@ func NewRootCommand() *cobra.Command {
 				_ = cmd.Usage()
 				return fmt.Errorf("binding flags: %w", err)
 			}
+			if opts.Debug {
+				opts.Verbose = true
+			}
 
 			// Determine output format
 			opts.Format = output.FormatPPM // default
@@ -114,7 +121,7 @@ func NewRootCommand() *cobra.Command {
 			if opts.FmtRLE {
 				opts.Format = output.FormatRLE
 			}
-			if opts.FmtPPM {
+			if opts.FmtPPM || opts.FmtPNM {
 				opts.Format = output.FormatPPM
 			}
 

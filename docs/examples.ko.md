@@ -74,6 +74,7 @@ JPEG를 binary PPM 또는 PGM으로 디코딩:
 ```
 
 RGB 이미지는 PPM(`P6`)으로, grayscale 이미지는 PGM(`P5`)으로 출력됩니다.
+`--pnm`은 upstream `djpeg`와 같은 출력 경로를 가리키는 alias로 사용할 수 있습니다.
 
 Color JPEG를 grayscale output으로 강제:
 
@@ -252,6 +253,8 @@ quantization 경로를 제공하지 않으므로 RGB 입력에는 PPM/BMP/Targa 
 ```bash
 ./dist/djpeg-linux-amd64-debug --verbose --ppm input.jpg > output.ppm
 ```
+
+`--debug`는 upstream `djpeg`와 같이 `--verbose`의 alias로 사용할 수 있습니다.
 
 ## CPU 프로파일링
 

@@ -34,6 +34,42 @@ func TestFastOptionMatchesExplicitFastNoSmooth(t *testing.T) {
 	}
 }
 
+func TestUpstreamCLIAliasesAreAccepted(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile("testdata/test_420.jpg")
+	if err != nil {
+		t.Skip("test_420.jpg not available:", err)
+	}
+
+	cmd := djpegcli.NewRootCommand()
+	var out bytes.Buffer
+	cmd.SetIn(bytes.NewReader(data))
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--bmp", "--pnm"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("executing --pnm alias: %v", err)
+	}
+	kind, _, _, components, _, err := parsePNMPixels(out.Bytes())
+	if err != nil {
+		t.Fatalf("parsing --pnm output: %v", err)
+	}
+	if kind != "P6" || components != 3 {
+		t.Fatalf("--pnm output kind/components = %s/%d, want P6/3", kind, components)
+	}
+
+	cmd = djpegcli.NewRootCommand()
+	out.Reset()
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--debug", "--version"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("executing --debug alias with --version: %v", err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("djpeg-go")) {
+		t.Fatalf("--version output = %q, want djpeg-go version", out.String())
+	}
+}
+
 func TestGrayscaleOptionWritesPGMForColorInput(t *testing.T) {
 	t.Parallel()
 

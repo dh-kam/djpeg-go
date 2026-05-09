@@ -74,6 +74,7 @@ Decode a JPEG to binary PPM or PGM:
 ```
 
 The output is PPM (`P6`) for RGB images and PGM (`P5`) for grayscale images.
+`--pnm` is accepted as the upstream `djpeg` alias for the same output path.
 
 Force grayscale output from a color JPEG:
 
@@ -252,6 +253,8 @@ Print input and output metadata to stderr:
 ```bash
 ./dist/djpeg-linux-amd64-debug --verbose --ppm input.jpg > output.ppm
 ```
+
+`--debug` is accepted as the upstream `djpeg` alias for `--verbose`.
 
 ## CPU Profiling
 
