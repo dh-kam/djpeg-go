@@ -46,6 +46,34 @@ func TestQuantizeRowsDefaultBuildsImagePalette(t *testing.T) {
 	}
 }
 
+func TestOrderedDitherAdjustMatchesIJGMatrix(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		levels int
+		x      int
+		y      int
+		want   int
+	}{
+		{name: "two_level_high", levels: 2, x: 0, y: 0, want: 127},
+		{name: "two_level_low", levels: 2, x: 1, y: 0, want: -64},
+		{name: "six_level_high", levels: 6, x: 0, y: 0, want: 25},
+		{name: "six_level_repeat", levels: 6, x: 16, y: 16, want: 25},
+		{name: "single_level", levels: 1, x: 0, y: 0, want: 0},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := orderedDitherAdjust(tt.levels, tt.x, tt.y); got != tt.want {
+				t.Fatalf("orderedDitherAdjust(%d, %d, %d) = %d, want %d",
+					tt.levels, tt.x, tt.y, got, tt.want)
+			}
+		})
+	}
+}
+
 func colormapHasRGB(cm *Colormap, r, g, b byte) bool {
 	if cm == nil || len(cm.Maps) < 3 {
 		return false
