@@ -394,9 +394,6 @@ func (dec *Decoder) ReadHeader() (int, int, int, marker.ColorSpace, error) {
 	if retcode != marker.JPEGHeaderOK {
 		return 0, 0, 0, 0, ErrUnsupportedJPEG
 	}
-	if dec.d.IsProgressive() {
-		return 0, 0, 0, 0, errors.New("jpeg: progressive JPEG not yet supported")
-	}
 	dec.applyInputColorSpaceOverride()
 	dec.applyOutputColorSpaceOverride()
 	dec.applyColorTransformOverride()
@@ -418,6 +415,9 @@ func (dec *Decoder) ReadHeaderStatus(requireImage bool) (int, error) {
 
 func (dec *Decoder) StartDecompress() error {
 	d := dec.d
+	if d.IsProgressive() {
+		return errors.New("jpeg: progressive JPEG not yet supported")
+	}
 	dec.memoryUsed = 0
 	dec.applyInputColorSpaceOverride()
 	dec.applyOutputColorSpaceOverride()

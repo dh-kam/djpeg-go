@@ -307,4 +307,6 @@ scripts/perf_compare.py \
 
 최신 보고서는 [performance.md](performance.md)에 있습니다.
 
-Arithmetic-coded JPEG와 progressive JPEG는 현재 decoder에서 거부합니다.
+Sequential arithmetic-coded JPEG는 지원합니다. Progressive JPEG header는
+조회할 수 있지만, progressive scanline 및 coefficient decoding은 현재 decoder에서
+거부합니다.

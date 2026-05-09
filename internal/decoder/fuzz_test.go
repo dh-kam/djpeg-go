@@ -148,8 +148,9 @@ func TestDecoderFinishWithoutStart(t *testing.T) {
 	_ = err
 }
 
-// TestDecoderProgressiveReject tests that progressive JPEG is rejected.
-func TestDecoderProgressiveReject(t *testing.T) {
+// TestDecoderProgressiveHeader tests that progressive JPEG headers are
+// accepted while full decompression remains unsupported.
+func TestDecoderProgressiveHeader(t *testing.T) {
 	// Build a minimal progressive JPEG (SOF2)
 	var buf bytes.Buffer
 	buf.Write([]byte{0xFF, 0xD8})
@@ -192,9 +193,16 @@ func TestDecoderProgressiveReject(t *testing.T) {
 	buf.Write([]byte{0xFF, 0xD9})
 
 	dec := New(bytes.NewReader(buf.Bytes()))
-	_, _, _, _, err := dec.ReadHeader()
-	if err == nil {
-		t.Error("expected error for progressive JPEG")
+	w, h, comps, _, err := dec.ReadHeader()
+	if err != nil {
+		t.Fatalf("ReadHeader progressive failed: %v", err)
+	}
+	if w != 8 || h != 8 || comps != 1 || !dec.IsProgressive() {
+		t.Fatalf("progressive header = %dx%d comps=%d progressive=%v, want 8x8 comps=1 progressive=true",
+			w, h, comps, dec.IsProgressive())
+	}
+	if err := dec.StartDecompress(); err == nil {
+		t.Fatal("StartDecompress progressive error = nil, want unsupported")
 	}
 }
 

@@ -265,7 +265,8 @@ ratio가 `1/8`부터 `16/8`까지의 지원 scale grid 중 가까운 값으로 �
 
 `WithOutputGamma`와 `WithBlockSmoothing`은 libjpeg decompressor parameter에
 대응합니다. Block smoothing은 progressive output pass에서 의미가 있으며,
-progressive decoding은 현재도 `ErrUnsupported`로 보고됩니다.
+현재 decoder는 progressive header를 읽을 수 있지만 progressive scanline 및
+coefficient decoding은 아직 `ErrUnsupported`로 보고합니다.
 
 ## Buffered-Image Output Pass
 
@@ -299,8 +300,9 @@ if ok, err := dec.FinishOutput(); err != nil || !ok {
 return dec.FinishDecompress()
 ```
 
-현재는 baseline JPEG replay path입니다. Progressive input은 아직
-`ErrUnsupported`로 보고되므로 progressive incremental display는 미지원입니다.
+현재는 sequential JPEG replay path입니다. Progressive header는 읽을 수 있지만
+decompression 시작 시 progressive input은 아직 `ErrUnsupported`로 보고되므로
+progressive incremental display는 미지원입니다.
 
 ## Quantized Output
 
@@ -928,7 +930,8 @@ if err != nil {
 _ = img
 ```
 
-현재 progressive JPEG는 지원하지 않습니다.
+현재 progressive scanline 및 coefficient decoding은 지원하지 않습니다.
+Progressive header는 `ReadHeader`와 `DecodeRasterConfig`로 조회할 수 있습니다.
 
 ## CLI Flag와 API Option 대응
 
@@ -978,7 +981,8 @@ import libjpeg "github.com/dh-kam/djpeg-go"
 
 - baseline 및 extended sequential non-progressive JPEG가 지원 경로이며,
   Huffman과 arithmetic entropy coding을 지원합니다.
-- progressive JPEG는 `ErrUnsupported`를 반환합니다.
+- progressive JPEG header는 읽을 수 있지만 progressive scanline 및
+  coefficient decoding은 `ErrUnsupported`를 반환합니다.
 - `Decode`는 `image.Image` interface 뒤에 `*Raster`를 반환합니다. RGBA allocation을
   강제하지 않으면서 raw byte 접근을 유지하기 위한 선택입니다.
 - package는 `image.RegisterFormat`를 자동 호출하지 않습니다. 이 decoder의 parity

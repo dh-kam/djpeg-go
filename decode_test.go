@@ -2665,6 +2665,22 @@ func TestDecodeProgressiveReturnsUnsupported(t *testing.T) {
 		t.Skipf("test fixture missing: %v", err)
 	}
 
+	cfg, err := djpeg.DecodeRasterConfig(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeRasterConfig progressive failed: %v", err)
+	}
+	if !cfg.Progressive || cfg.Width <= 0 || cfg.Height <= 0 {
+		t.Fatalf("DecodeRasterConfig progressive = %+v, want progressive dimensions", cfg)
+	}
+
+	imgCfg, err := djpeg.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeConfig progressive failed: %v", err)
+	}
+	if imgCfg.Width != cfg.Width || imgCfg.Height != cfg.Height {
+		t.Fatalf("DecodeConfig progressive = %dx%d, want %dx%d", imgCfg.Width, imgCfg.Height, cfg.Width, cfg.Height)
+	}
+
 	_, err = djpeg.DecodeRaster(bytes.NewReader(data))
 	if !errors.Is(err, djpeg.ErrUnsupported) {
 		t.Fatalf("DecodeRaster error = %v, want ErrUnsupported", err)
