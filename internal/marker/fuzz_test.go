@@ -61,9 +61,9 @@ func buildFuzzGrayscaleJPEG() []byte {
 func FuzzJPEGHeader(f *testing.F) {
 	f.Add(minimalJPEG)
 	f.Add(buildFuzzGrayscaleJPEG())
-	f.Add([]byte{0xFF})            // truncated
-	f.Add([]byte{0xFF, 0xD8})      // SOI only
-	f.Add([]byte{0x00, 0x00})      // not JPEG
+	f.Add([]byte{0xFF})             // truncated
+	f.Add([]byte{0xFF, 0xD8})       // SOI only
+	f.Add([]byte{0x00, 0x00})       // not JPEG
 	f.Add([]byte{})                 // empty
 	f.Add([]byte{0xFF, 0xD8, 0xFF}) // partial marker
 
@@ -115,10 +115,10 @@ func TestEdgeCaseZeroDimensions(t *testing.T) {
 	// SOF0 with 0x0 dimensions
 	buf.Write([]byte{0xFF, 0xC0})
 	buf.Write([]byte{0x00, 0x0B}) // length
-	buf.WriteByte(0x08)            // precision
+	buf.WriteByte(0x08)           // precision
 	buf.Write([]byte{0x00, 0x00}) // height = 0
 	buf.Write([]byte{0x00, 0x00}) // width = 0
-	buf.WriteByte(0x01)            // 1 component
+	buf.WriteByte(0x01)           // 1 component
 	buf.WriteByte(0x01)
 	buf.WriteByte(0x11)
 	buf.WriteByte(0x00)
@@ -139,7 +139,7 @@ func TestEdgeCaseLargeDimensions(t *testing.T) {
 	// SOF0 with 65500x65500 dimensions
 	buf.Write([]byte{0xFF, 0xC0})
 	buf.Write([]byte{0x00, 0x0B}) // length
-	buf.WriteByte(0x08)            // precision
+	buf.WriteByte(0x08)           // precision
 	// height = 65500 = 0xFFDC
 	buf.Write([]byte{0xFF, 0xDC})
 	// width = 65500 = 0xFFDC
@@ -198,7 +198,7 @@ func TestEdgeCaseTooManyComponents(t *testing.T) {
 	buf.WriteByte(0x08)
 	buf.Write([]byte{0x00, 0x08}) // height
 	buf.Write([]byte{0x00, 0x08}) // width
-	buf.WriteByte(0x05)            // 5 components
+	buf.WriteByte(0x05)           // 5 components
 	for i := 0; i < 5; i++ {
 		buf.WriteByte(byte(i + 1))
 		buf.WriteByte(0x11)
@@ -506,8 +506,8 @@ func TestEdgeCaseDAC(t *testing.T) {
 	// DAC marker: DC table 0, value 0x21
 	buf.Write([]byte{0xFF, 0xCC})
 	buf.Write([]byte{0x00, 0x04}) // length
-	buf.WriteByte(0x00)            // DC table 0
-	buf.WriteByte(0x21)            // L=2, U=1
+	buf.WriteByte(0x00)           // DC table 0
+	buf.WriteByte(0x21)           // L=2, U=1
 	buf.Write([]byte{0xFF, 0xD9})
 
 	d := NewDecompressor()
@@ -525,7 +525,7 @@ func TestEdgeCaseDACBadIndex(t *testing.T) {
 	// DAC marker with bad index
 	buf.Write([]byte{0xFF, 0xCC})
 	buf.Write([]byte{0x00, 0x04}) // length
-	buf.WriteByte(0x20)            // index = 32, >= 2*NumArithTbls=32, invalid
+	buf.WriteByte(0x20)           // index = 32, >= 2*NumArithTbls=32, invalid
 	buf.WriteByte(0x01)
 	buf.Write([]byte{0xFF, 0xD9})
 
@@ -544,8 +544,8 @@ func TestEdgeCaseDACBadValue(t *testing.T) {
 	// DAC marker: DC table 0, L > U (invalid)
 	buf.Write([]byte{0xFF, 0xCC})
 	buf.Write([]byte{0x00, 0x04}) // length
-	buf.WriteByte(0x00)            // DC table 0
-	buf.WriteByte(0x14)            // L=4 (low nibble), U=1 (high nibble) => L > U (invalid)
+	buf.WriteByte(0x00)           // DC table 0
+	buf.WriteByte(0x14)           // L=4 (low nibble), U=1 (high nibble) => L > U (invalid)
 	buf.Write([]byte{0xFF, 0xD9})
 
 	d := NewDecompressor()
@@ -728,7 +728,7 @@ func TestEdgeCaseDHTBadCount(t *testing.T) {
 	// DHT with total count > 256
 	buf.Write([]byte{0xFF, 0xC4})
 	buf.Write([]byte{0x00, 0x15}) // length
-	buf.WriteByte(0x00)            // DC table 0
+	buf.WriteByte(0x00)           // DC table 0
 	// bits: 20 codes each for first 13 lengths = 260 symbols
 	buf.Write([]byte{0x14, 0x14, 0x14, 0x14, 0x14, 0x14, 0x14, 0x14,
 		0x14, 0x14, 0x14, 0x14, 0x14, 0x00, 0x00, 0x00})
@@ -905,10 +905,9 @@ func TestEdgeCaseCOMMarker(t *testing.T) {
 	}
 }
 
-// TestEdgeCaseCOMMarkerSaved tests COM marker with saving enabled.
-// Note: When ReadHeader hits EOI without SOS (tables-only), it calls Reset()
-// which clears MarkerList. So we test with requireImage=true to verify the
-// error path but that COM was processed before Reset.
+// TestEdgeCaseCOMMarkerSaved tests COM marker with saving enabled. The
+// requireImage=true path errors before the tables-only abort path, but still
+// verifies that marker processing ran before the error.
 func TestEdgeCaseCOMMarkerSaved(t *testing.T) {
 	var buf bytes.Buffer
 	buf.Write([]byte{0xFF, 0xD8})
@@ -926,8 +925,7 @@ func TestEdgeCaseCOMMarkerSaved(t *testing.T) {
 		t.Fatal("expected error for EOI without SOS")
 	}
 
-	// MarkerList should be nil since Reset clears it on tables-only
-	// Just verify that SaveMarkers was configured correctly
+	// Just verify that SaveMarkers was configured correctly.
 	// (the COM was processed by saveMarker processor)
 }
 

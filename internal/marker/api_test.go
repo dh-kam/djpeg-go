@@ -35,18 +35,14 @@ func TestDecompressorReset(t *testing.T) {
 	if d.GlobalState != DStateStart {
 		t.Errorf("GlobalState after reset = %d, want %d", d.GlobalState, DStateStart)
 	}
-	for i := 0; i < NumQuantTbls; i++ {
-		if d.QuantTbls[i] != nil {
-			t.Errorf("QuantTbls[%d] should be nil after reset", i)
-		}
+	if d.QuantTbls[0] == nil {
+		t.Error("QuantTbls[0] should be preserved after reset")
 	}
-	for i := 0; i < NumHuffTbls; i++ {
-		if d.DCHuffTbls[i] != nil {
-			t.Errorf("DCHuffTbls[%d] should be nil after reset", i)
-		}
-		if d.ACHuffTbls[i] != nil {
-			t.Errorf("ACHuffTbls[%d] should be nil after reset", i)
-		}
+	if d.DCHuffTbls[0] == nil {
+		t.Error("DCHuffTbls[0] should be preserved after reset")
+	}
+	if d.ACHuffTbls[0] == nil {
+		t.Error("ACHuffTbls[0] should be preserved after reset")
 	}
 	if d.CompInfo != nil {
 		t.Error("CompInfo should be nil after reset")
@@ -155,7 +151,7 @@ func TestDecompressorGetQuantTable(t *testing.T) {
 	d := NewDecompressor()
 	d.QuantTbls[0] = &QuantTable{}
 
- qt := d.GetQuantTable(0)
+	qt := d.GetQuantTable(0)
 	if qt == nil {
 		t.Error("GetQuantTable(0) should not be nil")
 	}
@@ -406,10 +402,10 @@ func TestDecompressorReadHeaderFullYCbCr(t *testing.T) {
 	// SOF0: 8x8, 3 components (YCbCr subsampled 2x2)
 	buf.Write([]byte{0xFF, 0xC0})
 	buf.Write([]byte{0x00, 0x11}) // length = 17
-	buf.WriteByte(0x08)            // precision
+	buf.WriteByte(0x08)           // precision
 	buf.Write([]byte{0x00, 0x08}) // height
 	buf.Write([]byte{0x00, 0x08}) // width
-	buf.WriteByte(0x03)            // 3 components
+	buf.WriteByte(0x03)           // 3 components
 	// Y: ID=1, H=2 V=2, quant table 0
 	buf.WriteByte(0x01)
 	buf.WriteByte(0x22)
@@ -426,16 +422,16 @@ func TestDecompressorReadHeaderFullYCbCr(t *testing.T) {
 	// SOS
 	buf.Write([]byte{0xFF, 0xDA})
 	buf.Write([]byte{0x00, 0x0C}) // length = 12
-	buf.WriteByte(0x03)            // 3 components
-	buf.WriteByte(0x01)            // Y
-	buf.WriteByte(0x00)            // DC=0, AC=0
-	buf.WriteByte(0x02)            // Cb
-	buf.WriteByte(0x00)            // DC=0, AC=0
-	buf.WriteByte(0x03)            // Cr
-	buf.WriteByte(0x00)            // DC=0, AC=0
-	buf.WriteByte(0x00)            // Ss
-	buf.WriteByte(0x3F)            // Se
-	buf.WriteByte(0x00)            // Ah/Al
+	buf.WriteByte(0x03)           // 3 components
+	buf.WriteByte(0x01)           // Y
+	buf.WriteByte(0x00)           // DC=0, AC=0
+	buf.WriteByte(0x02)           // Cb
+	buf.WriteByte(0x00)           // DC=0, AC=0
+	buf.WriteByte(0x03)           // Cr
+	buf.WriteByte(0x00)           // DC=0, AC=0
+	buf.WriteByte(0x00)           // Ss
+	buf.WriteByte(0x3F)           // Se
+	buf.WriteByte(0x00)           // Ah/Al
 	// Some dummy scan data
 	buf.Write([]byte{0x00, 0x00})
 	buf.Write([]byte{0xFF, 0xD9}) // EOI

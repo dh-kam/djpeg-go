@@ -676,6 +676,11 @@ for _, component := range dec.Components() {
 _ = dec.RestartInterval()
 ```
 
+Table-only stream에서는 `ReadHeaderRequireImage(false)`를 호출합니다.
+`HeaderTablesOnly` 상태에서는 image config는 비어 있지만, EOI 전에 parsing된
+quantization/Huffman table은 table helper로 계속 확인할 수 있습니다. 이는
+abbreviated stream을 위한 libjpeg의 permanent-table 동작에 맞춘 것입니다.
+
 ## Options Struct
 
 설정을 저장해야 하는 코드에서는 `Options`와 `DecodeWithOptions` 또는

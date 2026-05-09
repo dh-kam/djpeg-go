@@ -682,6 +682,11 @@ for _, component := range dec.Components() {
 _ = dec.RestartInterval()
 ```
 
+For table-only streams, call `ReadHeaderRequireImage(false)`. A
+`HeaderTablesOnly` status leaves the image config empty, but quantization and
+Huffman tables parsed before EOI remain available through the table helpers,
+matching libjpeg's permanent-table behavior for abbreviated streams.
+
 ## Options Struct
 
 For code that stores settings, use `Options` and `DecodeWithOptions` or

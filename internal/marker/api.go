@@ -53,7 +53,8 @@ func (d *Decompressor) ReadHeader(requireImage bool) (int, error) {
 		if requireImage {
 			return JPEGSuspended, ErrNoImage
 		}
-		// Reset to start state
+		// Reset to start state. Like libjpeg's jpeg_abort(), this preserves
+		// permanent quantization and Huffman tables for abbreviated streams.
 		d.Reset()
 		retcode = JPEGHeaderTablesOnly
 	}
@@ -230,15 +231,6 @@ func (d *Decompressor) HasMultipleScans() bool {
 // Reset resets the decompressor to initial state for reuse.
 // Ported from jcomapi.c jpeg_abort().
 func (d *Decompressor) Reset() {
-	// Reset table pointers
-	for i := 0; i < NumQuantTbls; i++ {
-		d.QuantTbls[i] = nil
-	}
-	for i := 0; i < NumHuffTbls; i++ {
-		d.DCHuffTbls[i] = nil
-		d.ACHuffTbls[i] = nil
-	}
-
 	d.CompInfo = nil
 	d.MarkerList = nil
 	d.CoefBits = nil

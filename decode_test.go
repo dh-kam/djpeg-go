@@ -1453,11 +1453,41 @@ func TestDecoderReadHeaderRequireImageTablesOnly(t *testing.T) {
 		t.Fatalf("tables-only config=%+v header=%+v, want empty", cfg, dec.Header())
 	}
 
+	dec = djpeg.NewDecoder(bytes.NewReader(tableOnlyDQTJPEG()))
+	cfg, status, err = dec.ReadHeaderRequireImage(false)
+	if err != nil {
+		t.Fatalf("ReadHeaderRequireImage(false) DQT tables-only failed: %v", err)
+	}
+	if status != djpeg.HeaderTablesOnly || cfg != (djpeg.Config{}) || dec.Header() != (djpeg.Config{}) {
+		t.Fatalf("DQT tables-only status=%v cfg=%+v header=%+v, want tables-only empty config/header",
+			status, cfg, dec.Header())
+	}
+	qt, ok := dec.QuantizationTable(0)
+	if !ok {
+		t.Fatal("QuantizationTable(0) should be preserved after tables-only header")
+	}
+	if qt.Values[0] != 1 || qt.Values[63] != 64 {
+		t.Fatalf("tables-only quant table edge values = %d/%d, want 1/64", qt.Values[0], qt.Values[63])
+	}
+
 	dec = djpeg.NewDecoder(bytes.NewReader(data))
 	_, status, err = dec.ReadHeaderRequireImage(true)
 	if !errors.Is(err, djpeg.ErrInvalidJPEG) || status != djpeg.HeaderSuspended {
 		t.Fatalf("ReadHeaderRequireImage(true) tables-only status=%v err=%v, want suspended ErrInvalidJPEG", status, err)
 	}
+}
+
+func tableOnlyDQTJPEG() []byte {
+	var buf bytes.Buffer
+	buf.Write([]byte{0xff, 0xd8})
+	buf.Write([]byte{0xff, 0xdb})
+	buf.Write([]byte{0x00, 0x43})
+	buf.WriteByte(0x00)
+	for i := 0; i < 64; i++ {
+		buf.WriteByte(byte(i + 1))
+	}
+	buf.Write([]byte{0xff, 0xd9})
+	return buf.Bytes()
 }
 
 func TestDecoderReadHeaderRequireImageProgressive(t *testing.T) {
