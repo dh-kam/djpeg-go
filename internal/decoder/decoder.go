@@ -488,6 +488,12 @@ func (dec *Decoder) InputScanNumber() int               { return dec.d.InputScan
 func (dec *Decoder) OutputScanNumber() int              { return dec.d.OutputScanNumber }
 func (dec *Decoder) RecommendedOutputBufferHeight() int { return dec.d.RecOutbufHeight }
 
+// RawDataLinesPerIMCURow returns the max_lines value required for one
+// jpeg_read_raw_data call.
+func (dec *Decoder) RawDataLinesPerIMCURow() int {
+	return dec.d.MaxVSampFactor * dec.d.MinDCTVScaledSize
+}
+
 func (dec *Decoder) CalcOutputDimensions() {
 	dec.applyInputColorSpaceOverride()
 	dec.applyOutputColorSpaceOverride()
@@ -684,24 +690,72 @@ func (dec *Decoder) ReadRawData() ([]RawComponent, error) {
 		dec.allDecoded = true
 	}
 
+	out := dec.rawComponentsForIMCURows(0, dec.totalIMCURows)
+	dec.d.OutputScanline = dec.d.OutputHeight
+	return out, nil
+}
+
+// ReadRawDataRows returns one iMCU row of decoded downsampled component
+// planes. It mirrors a single jpeg_read_raw_data call and returns the number
+// of output scanlines consumed.
+func (dec *Decoder) ReadRawDataRows(maxLines int) ([]RawComponent, int, error) {
+	if dec.d.GlobalState != marker.DStateRawOK {
+		return nil, 0, marker.ErrBadState
+	}
+	linesPerIMCU := dec.RawDataLinesPerIMCURow()
+	if maxLines < linesPerIMCU {
+		return nil, 0, errors.New("jpeg: raw data buffer too small")
+	}
+	if dec.d.OutputScanline >= dec.d.OutputHeight || dec.currentIMCURow >= dec.totalIMCURows {
+		return nil, 0, nil
+	}
+
+	iMCURow := dec.currentIMCURow
+	dec.decodeIMCURow()
+	dec.currentIMCURow++
+	if dec.currentIMCURow >= dec.totalIMCURows {
+		dec.allDecoded = true
+	}
+
+	out := dec.rawComponentsForIMCURows(iMCURow, iMCURow+1)
+	dec.d.OutputScanline += linesPerIMCU
+	return out, linesPerIMCU, nil
+}
+
+func (dec *Decoder) rawComponentsForIMCURows(startIMCURow, endIMCURow int) []RawComponent {
 	components := dec.Components()
 	out := make([]RawComponent, 0, len(components))
 	for i, comp := range components {
 		if i >= len(dec.componentBuf) {
 			continue
 		}
+		markerComp := dec.d.Component(i)
+		if markerComp == nil {
+			continue
+		}
 		rows := dec.componentBuf[i]
 		if len(rows) == 0 || len(rows[0]) == 0 {
 			continue
 		}
-		height := comp.DownsampledHeight
-		if height <= 0 || height > len(rows) {
-			height = len(rows)
+		rowStart := startIMCURow * markerComp.MCUHeight * markerComp.DCVScaledSize
+		rowEnd := endIMCURow * markerComp.MCUHeight * markerComp.DCVScaledSize
+		if rowStart < 0 {
+			rowStart = 0
 		}
+		if rowEnd > len(rows) {
+			rowEnd = len(rows)
+		}
+		if comp.DownsampledHeight > 0 && rowEnd > comp.DownsampledHeight {
+			rowEnd = comp.DownsampledHeight
+		}
+		if rowStart > rowEnd {
+			rowStart = rowEnd
+		}
+		height := rowEnd - rowStart
 		stride := len(rows[0])
 		pix := make([]byte, height*stride)
 		for y := 0; y < height; y++ {
-			copy(pix[y*stride:(y+1)*stride], rows[y])
+			copy(pix[y*stride:(y+1)*stride], rows[rowStart+y])
 		}
 		width := comp.DownsampledWidth
 		if width <= 0 || width > stride {
@@ -715,8 +769,7 @@ func (dec *Decoder) ReadRawData() ([]RawComponent, error) {
 			Pix:       pix,
 		})
 	}
-	dec.d.OutputScanline = dec.d.OutputHeight
-	return out, nil
+	return out
 }
 
 func (dec *Decoder) QuantizationTable(index int) (values [64]uint16, sent bool, ok bool) {

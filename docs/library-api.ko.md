@@ -433,6 +433,23 @@ _ = components
 return dec.FinishDecompress()
 ```
 
+`jpeg_read_raw_data()` 호출 단위와 맞추려면 `ReadRawDataRows`를 사용합니다.
+`RawDataLinesPerIMCURow`는 필요한 `maxLines` 값을 반환합니다.
+
+```go
+linesPerIMCU := dec.RawDataLinesPerIMCURow()
+for dec.OutputScanline() < dec.OutputConfig().Height {
+	components, rows, err := dec.ReadRawDataRows(linesPerIMCU)
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		break
+	}
+	useRawIMCURow(components)
+}
+```
+
 Raw component output은 quantized output과 함께 사용할 수 없습니다. facade의
 post-decode `WithScale` 경로도 raw mode에서는 비활성화됩니다.
 

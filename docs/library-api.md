@@ -438,6 +438,23 @@ _ = components
 return dec.FinishDecompress()
 ```
 
+To mirror one `jpeg_read_raw_data()` call at a time, use `ReadRawDataRows`.
+`RawDataLinesPerIMCURow` returns the required `maxLines` value.
+
+```go
+linesPerIMCU := dec.RawDataLinesPerIMCURow()
+for dec.OutputScanline() < dec.OutputConfig().Height {
+	components, rows, err := dec.ReadRawDataRows(linesPerIMCU)
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		break
+	}
+	useRawIMCURow(components)
+}
+```
+
 Raw component output cannot be combined with quantized output. The facade's
 post-decode `WithScale` path is also disabled in raw mode.
 

@@ -520,6 +520,45 @@ func (d *Decoder) ReadRawData() ([]RawComponent, error) {
 	if err != nil {
 		return nil, wrapDecodeError("read raw data", err)
 	}
+	return convertRawComponents(internal), nil
+}
+
+// RawDataLinesPerIMCURow returns the maxLines value required for one
+// ReadRawDataRows call, matching libjpeg's max_v_samp_factor *
+// min_DCT_v_scaled_size rule.
+func (d *Decoder) RawDataLinesPerIMCURow() int {
+	if lines := d.dec.RawDataLinesPerIMCURow(); lines > 0 {
+		return lines
+	}
+	return d.header.MaxVSampFactor * d.header.MinDCTVScaledSize
+}
+
+// ReadRawDataRows returns one iMCU row of decoded downsampled component
+// planes. It requires WithRawDataOutput and StartDecompress, and mirrors one
+// libjpeg jpeg_read_raw_data call at the facade level. The returned row count
+// is the number of output scanlines consumed.
+func (d *Decoder) ReadRawDataRows(maxLines int) ([]RawComponent, int, error) {
+	if !d.opts.RawDataOut {
+		return nil, 0, fmt.Errorf("%w: raw data output was not enabled", ErrInvalidOption)
+	}
+	if !d.started {
+		return nil, 0, fmt.Errorf("%w: StartDecompress must be called before ReadRawDataRows", ErrInvalidOption)
+	}
+	linesPerIMCU := d.RawDataLinesPerIMCURow()
+	if maxLines < linesPerIMCU {
+		return nil, 0, fmt.Errorf("%w: raw data maxLines=%d, want at least %d", ErrInvalidOption, maxLines, linesPerIMCU)
+	}
+	internal, rows, err := d.dec.ReadRawDataRows(maxLines)
+	if err != nil {
+		return nil, rows, wrapDecodeError("read raw data", err)
+	}
+	return convertRawComponents(internal), rows, nil
+}
+
+func convertRawComponents(internal []internaldecoder.RawComponent) []RawComponent {
+	if len(internal) == 0 {
+		return nil
+	}
 	out := make([]RawComponent, len(internal))
 	for i, comp := range internal {
 		pix := make([]byte, len(comp.Pix))
@@ -532,7 +571,7 @@ func (d *Decoder) ReadRawData() ([]RawComponent, error) {
 			Pix:       pix,
 		}
 	}
-	return out, nil
+	return out
 }
 
 // ReadCoefficients returns quantized DCT coefficient blocks for each component.

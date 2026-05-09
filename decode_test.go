@@ -1023,6 +1023,59 @@ func TestDecoderRawDataLifecycle(t *testing.T) {
 	}
 }
 
+func TestDecoderRawDataRows(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/color_16x16_420.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	all, cfg, err := djpeg.DecodeRawComponents(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeRawComponents reference failed: %v", err)
+	}
+	dec := djpeg.NewDecoder(bytes.NewReader(data), djpeg.WithRawDataOutput())
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader raw rows failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress raw rows failed: %v", err)
+	}
+	linesPerIMCU := dec.RawDataLinesPerIMCURow()
+	if linesPerIMCU != cfg.MaxVSampFactor*cfg.MinDCTVScaledSize {
+		t.Fatalf("RawDataLinesPerIMCURow = %d, want %d",
+			linesPerIMCU, cfg.MaxVSampFactor*cfg.MinDCTVScaledSize)
+	}
+	if _, _, err := dec.ReadRawDataRows(linesPerIMCU - 1); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("ReadRawDataRows small buffer error = %v, want ErrInvalidOption", err)
+	}
+
+	components, rows, err := dec.ReadRawDataRows(linesPerIMCU)
+	if err != nil {
+		t.Fatalf("ReadRawDataRows failed: %v", err)
+	}
+	if rows != linesPerIMCU {
+		t.Fatalf("ReadRawDataRows rows = %d, want %d", rows, linesPerIMCU)
+	}
+	if len(components) != len(all) {
+		t.Fatalf("ReadRawDataRows components = %d, want %d", len(components), len(all))
+	}
+	for i := range components {
+		if components[i].Width != all[i].Width || components[i].Height != all[i].Height ||
+			components[i].Stride != all[i].Stride || !bytes.Equal(components[i].Pix, all[i].Pix) {
+			t.Fatalf("raw row component %d differs from all-at-once component", i)
+		}
+	}
+	if dec.OutputScanline() != linesPerIMCU {
+		t.Fatalf("OutputScanline after ReadRawDataRows = %d, want %d", dec.OutputScanline(), linesPerIMCU)
+	}
+	if components, rows, err := dec.ReadRawDataRows(linesPerIMCU); err != nil || rows != 0 || components != nil {
+		t.Fatalf("ReadRawDataRows after end components=%v rows=%d err=%v, want nil/0/nil", components, rows, err)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress raw rows failed: %v", err)
+	}
+}
+
 func TestDecodeRawComponentsInvalidOptions(t *testing.T) {
 	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
 	if err != nil {
