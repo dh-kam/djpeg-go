@@ -73,7 +73,7 @@ func QuantizeRows(rows [][]byte, info *ImageInfo, opts QuantizeOptions) ([][]byt
 	if dither == DitherDefault {
 		dither = DitherFS
 	}
-	if !opts.OnePass && opts.Colormap == nil && info.ColorSpace == ColorSpaceRGB && dither == DitherOrdered {
+	if info.ColorSpace == ColorSpaceRGB && dither == DitherOrdered && (opts.Colormap != nil || !opts.OnePass) {
 		dither = DitherFS
 	}
 

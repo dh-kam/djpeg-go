@@ -61,6 +61,47 @@ func TestQuantizeRowsRejectsTooFewGeneratedRGBColors(t *testing.T) {
 	}
 }
 
+func TestExternalRGBColormapOrderedDitherFallsBackToFS(t *testing.T) {
+	t.Parallel()
+
+	rows := [][]byte{
+		{96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96},
+		{96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96},
+		{96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96},
+		{96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96, 96},
+	}
+	info := &ImageInfo{
+		Width:         4,
+		Height:        4,
+		NumComponents: 3,
+		ColorSpace:    ColorSpaceRGB,
+	}
+	cm := &Colormap{
+		Maps:      [][]uint8{{0, 255}, {0, 255}, {0, 255}},
+		NumColors: 2,
+	}
+
+	ordered, _, err := QuantizeRows(rows, info, QuantizeOptions{
+		Colormap: cm,
+		Dither:   DitherOrdered,
+	})
+	if err != nil {
+		t.Fatalf("ordered external quantization failed: %v", err)
+	}
+	fs, _, err := QuantizeRows(rows, info, QuantizeOptions{
+		Colormap: cm,
+		Dither:   DitherFS,
+	})
+	if err != nil {
+		t.Fatalf("FS external quantization failed: %v", err)
+	}
+	for y := range ordered {
+		if !bytes.Equal(ordered[y], fs[y]) {
+			t.Fatalf("ordered external row %d = %v, want FS fallback row %v", y, ordered[y], fs[y])
+		}
+	}
+}
+
 func TestOrderedDitherAdjustMatchesIJGMatrix(t *testing.T) {
 	t.Parallel()
 
