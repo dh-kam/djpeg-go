@@ -399,6 +399,31 @@ for _, marker := range dec.Markers() {
 Only APP0 through APP15 and COM markers are accepted. APP0 and APP14 are still
 parsed internally for JFIF/Adobe behavior when saving is disabled.
 
+## Tables
+
+After `ReadHeader`, callers can inspect parsed DQT and DHT tables through
+copy-returning helpers. This mirrors the libjpeg decompressor fields
+`quant_tbl_ptrs`, `dc_huff_tbl_ptrs`, and `ac_huff_tbl_ptrs` without exposing
+mutable decoder-owned storage.
+
+```go
+dec := libjpeg.NewDecoder(r)
+if _, err := dec.ReadHeader(); err != nil {
+	return err
+}
+
+qt, ok := dec.QuantizationTable(0)
+if ok {
+	_ = qt.Values
+}
+
+dc, ok := dec.HuffmanTable(0, libjpeg.HuffmanTableDC)
+if ok {
+	_ = dc.Bits
+	_ = dc.Values
+}
+```
+
 ## Options Struct
 
 For code that stores settings, use `Options` and `DecodeWithOptions` or

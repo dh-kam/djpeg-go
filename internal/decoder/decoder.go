@@ -392,6 +392,22 @@ func (dec *Decoder) AdobeInfo() (saw bool, transform uint8) {
 	return dec.d.SawAdobeMarker, dec.d.AdobeTransform
 }
 
+func (dec *Decoder) QuantizationTable(index int) (values [64]uint16, sent bool, ok bool) {
+	table := dec.d.GetQuantTable(index)
+	if table == nil {
+		return values, false, false
+	}
+	return table.QuantVal, table.SentTable, true
+}
+
+func (dec *Decoder) HuffmanTable(index int, dc bool) (bits [17]uint8, values [256]uint8, sent bool, ok bool) {
+	table := dec.d.GetHuffTable(index, dc)
+	if table == nil {
+		return bits, values, false, false
+	}
+	return table.Bits, table.HuffVal, table.SentTable, true
+}
+
 func (dec *Decoder) ReadScanlines(scanlines [][]uint8) (int, error) {
 	if dec.d.GlobalState != marker.DStateScanning {
 		return 0, marker.ErrBadState

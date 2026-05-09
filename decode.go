@@ -314,6 +314,33 @@ func (d *Decoder) Markers() []Marker {
 	return out
 }
 
+// QuantizationTable returns a parsed quantization table after ReadHeader.
+func (d *Decoder) QuantizationTable(index int) (QuantizationTable, bool) {
+	values, sent, ok := d.dec.QuantizationTable(index)
+	if !ok {
+		return QuantizationTable{}, false
+	}
+	return QuantizationTable{Values: values, SentTable: sent}, true
+}
+
+// HuffmanTable returns a parsed DC or AC Huffman table after ReadHeader.
+func (d *Decoder) HuffmanTable(index int, class HuffmanTableClass) (HuffmanTable, bool) {
+	var dc bool
+	switch class {
+	case HuffmanTableDC:
+		dc = true
+	case HuffmanTableAC:
+		dc = false
+	default:
+		return HuffmanTable{}, false
+	}
+	bits, values, sent, ok := d.dec.HuffmanTable(index, dc)
+	if !ok {
+		return HuffmanTable{}, false
+	}
+	return HuffmanTable{Bits: bits, Values: values, SentTable: sent}, true
+}
+
 // OutputConfig returns output metadata after Start. Before Start, it returns
 // the header-derived configuration.
 func (d *Decoder) OutputConfig() Config {

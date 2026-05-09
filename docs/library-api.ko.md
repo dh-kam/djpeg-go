@@ -395,6 +395,31 @@ for _, marker := range dec.Markers() {
 APP0부터 APP15까지와 COM marker만 허용합니다. APP0과 APP14는 저장하지 않아도
 JFIF/Adobe 동작을 위해 내부적으로 계속 파싱됩니다.
 
+## Tables
+
+`ReadHeader` 이후에는 parsing된 DQT와 DHT table을 복사본으로 확인할 수 있습니다.
+이는 libjpeg decompressor field인 `quant_tbl_ptrs`, `dc_huff_tbl_ptrs`,
+`ac_huff_tbl_ptrs`에 대응하되, decoder가 소유한 mutable storage를 직접 노출하지
+않습니다.
+
+```go
+dec := libjpeg.NewDecoder(r)
+if _, err := dec.ReadHeader(); err != nil {
+	return err
+}
+
+qt, ok := dec.QuantizationTable(0)
+if ok {
+	_ = qt.Values
+}
+
+dc, ok := dec.HuffmanTable(0, libjpeg.HuffmanTableDC)
+if ok {
+	_ = dc.Bits
+	_ = dc.Values
+}
+```
+
 ## Options Struct
 
 설정을 저장해야 하는 코드에서는 `Options`와 `DecodeWithOptions` 또는

@@ -560,6 +560,51 @@ func TestDecoderSavedMarkers(t *testing.T) {
 	}
 }
 
+func TestDecoderTables(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	if _, ok := dec.QuantizationTable(0); ok {
+		t.Fatal("QuantizationTable should be unavailable before ReadHeader")
+	}
+	if _, ok := dec.HuffmanTable(0, djpeg.HuffmanTableDC); ok {
+		t.Fatal("HuffmanTable should be unavailable before ReadHeader")
+	}
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+
+	qt, ok := dec.QuantizationTable(0)
+	if !ok {
+		t.Fatal("QuantizationTable(0) not found")
+	}
+	if qt.Values[0] == 0 {
+		t.Fatalf("QuantizationTable(0).Values[0] = 0, want parsed value")
+	}
+	qt.Values[0] = 0
+	again, ok := dec.QuantizationTable(0)
+	if !ok || again.Values[0] == 0 {
+		t.Fatal("QuantizationTable returned mutable decoder-owned data")
+	}
+
+	dc, ok := dec.HuffmanTable(0, djpeg.HuffmanTableDC)
+	if !ok {
+		t.Fatal("HuffmanTable(0, DC) not found")
+	}
+	if dc.Bits[0] != 0 {
+		t.Fatalf("HuffmanTable(0, DC).Bits[0] = %d, want 0", dc.Bits[0])
+	}
+	if _, ok := dec.HuffmanTable(99, djpeg.HuffmanTableDC); ok {
+		t.Fatal("HuffmanTable out-of-range lookup unexpectedly found a table")
+	}
+	if _, ok := dec.HuffmanTable(0, djpeg.HuffmanTableClass(99)); ok {
+		t.Fatal("HuffmanTable invalid class unexpectedly found a table")
+	}
+}
+
 func TestDecodeRasterConfigExposesHeaderMetadata(t *testing.T) {
 	data, err := base64.StdEncoding.DecodeString(tinyCMYKJPEGBase64)
 	if err != nil {
