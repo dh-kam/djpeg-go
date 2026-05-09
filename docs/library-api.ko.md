@@ -585,9 +585,20 @@ if err := dec.StartDecompress(); err != nil {
 
 현재 mutable method는 `SetIDCT`, `SetUpsampling`, `SetCompatibility`,
 `SetChromaIDCTScaling`, `SetInputColorSpace`, `SetOutputColorSpace`,
-`SetColorTransform`, `SetScale`, `SetMaxMemory`입니다. 모두 `StartDecompress`
-전에 호출해야 하며, output이 시작된 뒤 변경하면 `ErrInvalidOption`을
-반환합니다.
+`SetColorTransform`, `SetScale`, `SetRawDataOutput`, `SetBufferedImage`,
+`SetMaxMemory`, `SetOutputGamma`, `SetBlockSmoothing`, `SetQuantizeColors`,
+`SetDitherMode`, `SetColormap`입니다. 모두 `StartDecompress` 전에 호출해야
+하며, output이 시작된 뒤 변경하면 `ErrInvalidOption`을 반환합니다.
+
+`SetProgressMonitor`로 이후 read 호출에서 사용할 progress callback을 설치하거나
+교체할 수 있습니다.
+
+```go
+dec.SetProgressMonitor(func(p libjpeg.Progress) {
+	_ = p.PassCounter
+	_ = p.PassLimit
+})
+```
 
 ## Header State
 

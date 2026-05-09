@@ -135,6 +135,12 @@ func TestDecoderMutableDecompressionParameters(t *testing.T) {
 	if err := dec.SetChromaIDCTScaling(false); err != nil {
 		t.Fatalf("SetChromaIDCTScaling failed: %v", err)
 	}
+	if err := dec.SetInputColorSpace(djpeg.InputYCbCr); err != nil {
+		t.Fatalf("SetInputColorSpace failed: %v", err)
+	}
+	if err := dec.SetColorTransform(djpeg.ColorTransformDefault); err != nil {
+		t.Fatalf("SetColorTransform failed: %v", err)
+	}
 	if err := dec.SetOutputColorSpace(djpeg.ColorSpaceGray); err != nil {
 		t.Fatalf("SetOutputColorSpace failed: %v", err)
 	}
@@ -173,6 +179,165 @@ func TestDecoderMutableDecompressionParameters(t *testing.T) {
 	}
 	if err := dec.SetOutputColorSpace(djpeg.ColorSpaceRGB); !errors.Is(err, djpeg.ErrInvalidOption) {
 		t.Fatalf("SetOutputColorSpace after start error = %v, want ErrInvalidOption", err)
+	}
+}
+
+func TestDecoderMutableQuantizationParameters(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/color_8x8_444.jpg")
+	if err != nil {
+		t.Skipf("test fixture missing: %v", err)
+	}
+
+	var progress []djpeg.Progress
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	if err := dec.SetOutputGamma(1.0); err != nil {
+		t.Fatalf("SetOutputGamma failed: %v", err)
+	}
+	if err := dec.SetQuantizeColors(4); err != nil {
+		t.Fatalf("SetQuantizeColors failed: %v", err)
+	}
+	if err := dec.SetDitherMode(djpeg.DitherNone); err != nil {
+		t.Fatalf("SetDitherMode failed: %v", err)
+	}
+	dec.SetProgressMonitor(func(p djpeg.Progress) {
+		progress = append(progress, p)
+	})
+
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress failed: %v", err)
+	}
+	out := dec.OutputConfig()
+	if out.PixelFormat != djpeg.PixelFormatIndexed8 || !out.Quantized || out.DesiredNumColors != 4 {
+		t.Fatalf("output config = %+v, want indexed quantized output with 4 desired colors", out)
+	}
+	if palette := dec.Palette(); len(palette) == 0 || len(palette) > 4 {
+		t.Fatalf("palette length = %d, want 1..4", len(palette))
+	}
+
+	row := make([]byte, out.Stride)
+	rows := 0
+	for rows < out.Height {
+		n, err := dec.ReadScanlines([][]byte{row})
+		if err != nil {
+			t.Fatalf("ReadScanlines failed: %v", err)
+		}
+		if n == 0 {
+			break
+		}
+		rows += n
+	}
+	if rows != out.Height {
+		t.Fatalf("read rows = %d, want %d", rows, out.Height)
+	}
+	if len(progress) == 0 {
+		t.Fatal("SetProgressMonitor callback was not invoked")
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress failed: %v", err)
+	}
+	if err := dec.SetQuantizeColors(8); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("SetQuantizeColors after start error = %v, want ErrInvalidOption", err)
+	}
+}
+
+func TestDecoderMutableColormapParameter(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("test fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	if err := dec.SetColormap(color.Palette{
+		color.Gray{Y: 0},
+		color.Gray{Y: 255},
+	}); err != nil {
+		t.Fatalf("SetColormap failed: %v", err)
+	}
+	if err := dec.SetDitherMode(djpeg.DitherNone); err != nil {
+		t.Fatalf("SetDitherMode failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress failed: %v", err)
+	}
+	if out := dec.OutputConfig(); out.PixelFormat != djpeg.PixelFormatIndexed8 || out.ActualNumColors != 2 {
+		t.Fatalf("output config = %+v, want indexed output with two colors", out)
+	}
+	if len(dec.Palette()) != 2 {
+		t.Fatalf("palette length = %d, want 2", len(dec.Palette()))
+	}
+	row := make([]byte, dec.OutputConfig().Stride)
+	for dec.OutputScanline() < dec.OutputConfig().Height {
+		if _, err := dec.ReadScanlines([][]byte{row}); err != nil {
+			t.Fatalf("ReadScanlines failed: %v", err)
+		}
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress failed: %v", err)
+	}
+}
+
+func TestDecoderMutableRawAndBufferedParameters(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/color_16x16_420.jpg")
+	if err != nil {
+		t.Skipf("test fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	if err := dec.SetRawDataOutput(true); err != nil {
+		t.Fatalf("SetRawDataOutput failed: %v", err)
+	}
+	if err := dec.SetScale(1, 2); !errors.Is(err, djpeg.ErrUnsupported) {
+		t.Fatalf("SetScale with raw output error = %v, want ErrUnsupported", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress failed: %v", err)
+	}
+	components, err := dec.ReadRawData()
+	if err != nil {
+		t.Fatalf("ReadRawData failed: %v", err)
+	}
+	if len(components) != 3 {
+		t.Fatalf("raw component count = %d, want 3", len(components))
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress failed: %v", err)
+	}
+
+	buffered := djpeg.NewDecoder(bytes.NewReader(data))
+	if _, err := buffered.ReadHeader(); err != nil {
+		t.Fatalf("buffered ReadHeader failed: %v", err)
+	}
+	if err := buffered.SetBufferedImage(true); err != nil {
+		t.Fatalf("SetBufferedImage failed: %v", err)
+	}
+	if err := buffered.SetRawDataOutput(true); !errors.Is(err, djpeg.ErrUnsupported) {
+		t.Fatalf("SetRawDataOutput with buffered image error = %v, want ErrUnsupported", err)
+	}
+
+	invalid := djpeg.NewDecoder(bytes.NewReader(data))
+	if _, err := invalid.ReadHeader(); err != nil {
+		t.Fatalf("invalid ReadHeader failed: %v", err)
+	}
+	if err := invalid.SetOutputGamma(0); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("SetOutputGamma(0) error = %v, want ErrInvalidOption", err)
+	}
+	if err := invalid.SetQuantizeColors(1); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("SetQuantizeColors(1) error = %v, want ErrInvalidOption", err)
+	}
+	if err := invalid.SetDitherMode(djpeg.DitherMode(99)); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("SetDitherMode invalid error = %v, want ErrInvalidOption", err)
+	}
+	if err := invalid.SetColormap(color.Palette{color.Gray{Y: 0}}); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("SetColormap single-color error = %v, want ErrInvalidOption", err)
 	}
 }
 

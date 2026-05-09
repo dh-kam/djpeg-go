@@ -935,6 +935,39 @@ func (d *Decoder) SetScale(numerator, denominator int) error {
 	if _, _, err := next.scaleSize(); err != nil {
 		return err
 	}
+	if err := d.validateOptionsCandidate(next); err != nil {
+		return err
+	}
+	d.opts = next
+	return nil
+}
+
+// SetRawDataOutput controls libjpeg's raw_data_out parameter. It must be
+// called before StartDecompress.
+func (d *Decoder) SetRawDataOutput(enabled bool) error {
+	if err := d.ensureNotStarted("SetRawDataOutput"); err != nil {
+		return err
+	}
+	next := d.opts
+	next.RawDataOut = enabled
+	if err := d.validateOptionsCandidate(next); err != nil {
+		return err
+	}
+	d.opts = next
+	return nil
+}
+
+// SetBufferedImage controls libjpeg's buffered_image parameter. It must be
+// called before StartDecompress.
+func (d *Decoder) SetBufferedImage(enabled bool) error {
+	if err := d.ensureNotStarted("SetBufferedImage"); err != nil {
+		return err
+	}
+	next := d.opts
+	next.BufferedImage = enabled
+	if err := d.validateOptionsCandidate(next); err != nil {
+		return err
+	}
 	d.opts = next
 	return nil
 }
@@ -950,6 +983,87 @@ func (d *Decoder) SetMaxMemory(bytes int64) error {
 	}
 	d.opts.MaxMemoryBytes = bytes
 	return nil
+}
+
+// SetOutputGamma controls libjpeg's output_gamma parameter. A positive finite
+// value is required, and the method must be called before StartDecompress.
+func (d *Decoder) SetOutputGamma(gamma float64) error {
+	if err := d.ensureNotStarted("SetOutputGamma"); err != nil {
+		return err
+	}
+	if gamma <= 0 || math.IsNaN(gamma) || math.IsInf(gamma, 0) {
+		return fmt.Errorf("%w: output gamma must be positive and finite", ErrInvalidOption)
+	}
+	d.opts.OutputGamma = gamma
+	return nil
+}
+
+// SetBlockSmoothing controls libjpeg's do_block_smoothing parameter. It must
+// be called before StartDecompress.
+func (d *Decoder) SetBlockSmoothing(enabled bool) error {
+	if err := d.ensureNotStarted("SetBlockSmoothing"); err != nil {
+		return err
+	}
+	if enabled {
+		d.opts.BlockSmoothing = BlockSmoothingEnabled
+	} else {
+		d.opts.BlockSmoothing = BlockSmoothingDisabled
+	}
+	return nil
+}
+
+// SetQuantizeColors controls libjpeg's quantize_colors and
+// desired_number_of_colors parameters. It must be called before
+// StartDecompress.
+func (d *Decoder) SetQuantizeColors(desiredNumColors int) error {
+	if err := d.ensureNotStarted("SetQuantizeColors"); err != nil {
+		return err
+	}
+	next := d.opts
+	next.QuantizeColors = true
+	next.DesiredNumColors = desiredNumColors
+	if err := d.validateOptionsCandidate(next); err != nil {
+		return err
+	}
+	d.opts = next
+	return nil
+}
+
+// SetDitherMode selects the dither mode used for quantized output. It must be
+// called before StartDecompress.
+func (d *Decoder) SetDitherMode(mode DitherMode) error {
+	if err := d.ensureNotStarted("SetDitherMode"); err != nil {
+		return err
+	}
+	next := d.opts
+	next.DitherMode = mode
+	if err := d.validateOptionsCandidate(next); err != nil {
+		return err
+	}
+	d.opts = next
+	return nil
+}
+
+// SetColormap requests palette-indexed output with an external colormap. It
+// must be called before StartDecompress. Use NewColormap to switch palettes
+// after output has been prepared.
+func (d *Decoder) SetColormap(palette color.Palette) error {
+	if err := d.ensureNotStarted("SetColormap"); err != nil {
+		return err
+	}
+	next := d.opts
+	next.QuantizeColors = true
+	next.Colormap = append(color.Palette(nil), palette...)
+	if err := d.validateOptionsCandidate(next); err != nil {
+		return err
+	}
+	d.opts = next
+	return nil
+}
+
+// SetProgressMonitor installs or replaces the libjpeg-style progress callback.
+func (d *Decoder) SetProgressMonitor(monitor ProgressMonitor) {
+	d.opts.ProgressMonitor = monitor
 }
 
 // SaveMarkers configures APPn or COM marker retention before ReadHeader. It
@@ -1109,6 +1223,21 @@ func (d *Decoder) IsArithmetic() bool {
 func (d *Decoder) ensureNotStarted(name string) error {
 	if d.started {
 		return fmt.Errorf("%w: %s must be called before StartDecompress", ErrInvalidOption, name)
+	}
+	return nil
+}
+
+func (d *Decoder) validateOptionsCandidate(opts Options) error {
+	current := d.opts
+	d.opts = opts
+	defer func() {
+		d.opts = current
+	}()
+	if err := d.validateQuantizationOptions(); err != nil {
+		return err
+	}
+	if err := d.validateRawDataOptions(); err != nil {
+		return err
 	}
 	return nil
 }

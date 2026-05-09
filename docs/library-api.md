@@ -590,9 +590,21 @@ if err := dec.StartDecompress(); err != nil {
 
 The mutable methods currently include `SetIDCT`, `SetUpsampling`,
 `SetCompatibility`, `SetChromaIDCTScaling`, `SetInputColorSpace`,
-`SetOutputColorSpace`, `SetColorTransform`, `SetScale`, and `SetMaxMemory`.
-They must be called before `StartDecompress`; changing these parameters after
-output starts returns `ErrInvalidOption`.
+`SetOutputColorSpace`, `SetColorTransform`, `SetScale`, `SetRawDataOutput`,
+`SetBufferedImage`, `SetMaxMemory`, `SetOutputGamma`, `SetBlockSmoothing`,
+`SetQuantizeColors`, `SetDitherMode`, and `SetColormap`. They must be called
+before `StartDecompress`; changing these parameters after output starts returns
+`ErrInvalidOption`.
+
+`SetProgressMonitor` can be used to install or replace the progress callback
+for later read calls:
+
+```go
+dec.SetProgressMonitor(func(p libjpeg.Progress) {
+	_ = p.PassCounter
+	_ = p.PassLimit
+})
+```
 
 ## Header State
 
