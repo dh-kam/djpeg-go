@@ -335,9 +335,10 @@ _ = raster.Palette
 
 Generated RGB palettes use libjpeg-style two-pass, image-derived selection by
 default. Use `WithQuantizationMode(libjpeg.QuantizationOnePass)` to select the
-faster fixed color-cube path used by the `djpeg --onepass` flag.
-As in IJG libjpeg, generated RGB palettes require at least 8 requested colors;
-external palettes may contain one or more entries.
+faster fixed color-cube path used by the `djpeg --onepass` flag. CMYK output
+uses a fixed generated CMYK palette. As in IJG libjpeg, generated RGB palettes
+require at least 8 requested colors; external palettes may contain one or more
+entries.
 
 For external colormap mode, pass a palette explicitly:
 
@@ -373,8 +374,9 @@ if err := dec.NewColormap(color.Palette{
 }
 ```
 
-Quantized output currently supports grayscale and RGB output. CMYK/YCCK
-quantized output returns `ErrUnsupported`.
+Quantized output currently supports grayscale, RGB, and CMYK output. YCCK
+quantized output still returns `ErrUnsupported`; request CMYK output for
+four-component PDF-style streams that need indexed output.
 
 ## Coefficient Output
 

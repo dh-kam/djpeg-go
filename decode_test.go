@@ -944,6 +944,48 @@ func TestDecodeRasterQuantizedOutput(t *testing.T) {
 	}
 }
 
+func TestDecodeRasterCMYKQuantizedOutput(t *testing.T) {
+	data, err := base64.StdEncoding.DecodeString(tinyCMYKJPEGBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := djpeg.DecodeRasterConfig(
+		bytes.NewReader(data),
+		djpeg.WithOutputColorSpace(djpeg.ColorSpaceCMYK),
+		djpeg.WithQuantizeColors(8),
+		djpeg.WithDitherMode(djpeg.DitherNone),
+	)
+	if err != nil {
+		t.Fatalf("DecodeRasterConfig CMYK quantized failed: %v", err)
+	}
+	if !cfg.Quantized || cfg.PixelFormat != djpeg.PixelFormatIndexed8 || cfg.ColorSpace != djpeg.ColorSpaceCMYK {
+		t.Fatalf("CMYK quantized config = %+v, want indexed8 cmyk quantized output", cfg)
+	}
+
+	raster, err := djpeg.DecodeRaster(
+		bytes.NewReader(data),
+		djpeg.WithOutputColorSpace(djpeg.ColorSpaceCMYK),
+		djpeg.WithQuantizeColors(8),
+		djpeg.WithDitherMode(djpeg.DitherNone),
+	)
+	if err != nil {
+		t.Fatalf("DecodeRaster CMYK quantized failed: %v", err)
+	}
+	if raster.Format != djpeg.PixelFormatIndexed8 || len(raster.Palette) == 0 || len(raster.Palette) > 8 {
+		t.Fatalf("CMYK quantized raster format=%s palette=%d, want indexed8 with 1..8 colors",
+			raster.Format, len(raster.Palette))
+	}
+	if _, ok := raster.Palette[0].(color.CMYK); !ok {
+		t.Fatalf("CMYK quantized palette entry type = %T, want color.CMYK", raster.Palette[0])
+	}
+	for i, idx := range raster.Pix {
+		if int(idx) >= len(raster.Palette) {
+			t.Fatalf("pixel %d index=%d outside palette length %d", i, idx, len(raster.Palette))
+		}
+	}
+}
+
 func TestDecodeRasterQuantizationModeOnePass(t *testing.T) {
 	data, err := os.ReadFile("tests/testdata/color_8x8_444.jpg")
 	if err != nil {
@@ -1270,18 +1312,6 @@ func TestDecodeRasterQuantizedInvalidOptions(t *testing.T) {
 		t.Fatalf("DecodeRaster WithQuantizeColors(7) error = %v, want ErrInvalidOption", err)
 	}
 
-	cmykData, err := base64.StdEncoding.DecodeString(tinyCMYKJPEGBase64)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = djpeg.DecodeRasterConfig(
-		bytes.NewReader(cmykData),
-		djpeg.WithOutputColorSpace(djpeg.ColorSpaceCMYK),
-		djpeg.WithQuantizeColors(8),
-	)
-	if !errors.Is(err, djpeg.ErrUnsupported) {
-		t.Fatalf("DecodeRasterConfig CMYK quantized error = %v, want ErrUnsupported", err)
-	}
 }
 
 func TestDecodeRawComponents(t *testing.T) {

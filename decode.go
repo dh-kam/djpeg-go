@@ -1501,9 +1501,11 @@ func outputColorSpaceForRaster(format PixelFormat) (internaloutput.ColorSpace, e
 		return internaloutput.ColorSpaceGrayscale, nil
 	case PixelFormatRGB24:
 		return internaloutput.ColorSpaceRGB, nil
+	case PixelFormatCMYK32:
+		return internaloutput.ColorSpaceCMYK, nil
 	default:
 		return internaloutput.ColorSpaceRGB,
-			fmt.Errorf("%w: quantized output supports gray and rgb output, got %s", ErrUnsupported, format)
+			fmt.Errorf("%w: quantized output supports gray, rgb, and cmyk output, got %s", ErrUnsupported, format)
 	}
 }
 
@@ -1535,8 +1537,21 @@ func outputColormapFromPalette(palette color.Palette, format PixelFormat) (*inte
 			blue[i] = byte(b >> 8)
 		}
 		return &internaloutput.Colormap{Maps: [][]uint8{red, green, blue}, NumColors: len(palette)}, nil
+	case PixelFormatCMYK32:
+		cyan := make([]uint8, len(palette))
+		magenta := make([]uint8, len(palette))
+		yellow := make([]uint8, len(palette))
+		black := make([]uint8, len(palette))
+		for i, c := range palette {
+			cmyk := color.CMYKModel.Convert(c).(color.CMYK)
+			cyan[i] = cmyk.C
+			magenta[i] = cmyk.M
+			yellow[i] = cmyk.Y
+			black[i] = cmyk.K
+		}
+		return &internaloutput.Colormap{Maps: [][]uint8{cyan, magenta, yellow, black}, NumColors: len(palette)}, nil
 	default:
-		return nil, fmt.Errorf("%w: quantized output supports gray and rgb output, got %s", ErrUnsupported, format)
+		return nil, fmt.Errorf("%w: quantized output supports gray, rgb, and cmyk output, got %s", ErrUnsupported, format)
 	}
 }
 
@@ -1549,6 +1564,16 @@ func paletteFromOutputColormap(cmap *internaloutput.Colormap) color.Palette {
 		gray := cmap.Maps[0]
 		for i := range palette {
 			palette[i] = color.Gray{Y: gray[i]}
+		}
+		return palette
+	}
+	if len(cmap.Maps) >= 4 {
+		cyan := cmap.Maps[0]
+		magenta := cmap.Maps[1]
+		yellow := cmap.Maps[2]
+		black := cmap.Maps[3]
+		for i := range palette {
+			palette[i] = color.CMYK{C: cyan[i], M: magenta[i], Y: yellow[i], K: black[i]}
 		}
 		return palette
 	}
@@ -1722,9 +1747,9 @@ func (d *Decoder) applyQuantizationToConfig(cfg *Config) error {
 		return nil
 	}
 	switch cfg.PixelFormat {
-	case PixelFormatGray8, PixelFormatRGB24:
+	case PixelFormatGray8, PixelFormatRGB24, PixelFormatCMYK32:
 	default:
-		return fmt.Errorf("%w: quantized output supports gray and rgb output, got %s", ErrUnsupported, cfg.PixelFormat)
+		return fmt.Errorf("%w: quantized output supports gray, rgb, and cmyk output, got %s", ErrUnsupported, cfg.PixelFormat)
 	}
 	cfg.Components = 1
 	cfg.Stride = cfg.Width

@@ -17,11 +17,12 @@ type ColorSpace int
 const (
 	ColorSpaceGrayscale ColorSpace = iota
 	ColorSpaceRGB
+	ColorSpaceCMYK
 )
 
 // Colormap holds an optional palette for indexed-color output.
 // Each entry in Maps is a slice of N uint8 values, one per channel.
-// Maps has length 1 for grayscale or 3 for RGB.
+// Maps has length 1 for grayscale, 3 for RGB, or 4 for CMYK.
 type Colormap struct {
 	Maps      [][]uint8
 	NumColors int
@@ -32,7 +33,7 @@ type Colormap struct {
 type ImageInfo struct {
 	Width          int
 	Height         int
-	NumComponents  int // 1 for grayscale, 3 for RGB
+	NumComponents  int // 1 for grayscale, 3 for RGB, 4 for CMYK
 	ColorSpace     ColorSpace
 	QuantizeColors bool      // whether color quantization is active
 	DesiredColors  int       // desired number of colors (0 = unlimited)

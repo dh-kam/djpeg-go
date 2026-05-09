@@ -102,6 +102,8 @@ func quantizeComponents(cs ColorSpace) (int, error) {
 		return 1, nil
 	case ColorSpaceRGB:
 		return 3, nil
+	case ColorSpaceCMYK:
+		return 4, nil
 	default:
 		return 0, fmt.Errorf("quantize: unsupported color space %d", cs)
 	}
@@ -134,6 +136,8 @@ func quantizeColormap(rows [][]byte, info *ImageInfo, opts QuantizeOptions) (*Co
 			return makeRGBMedianCutPalette(rows, info, desired)
 		}
 		return makeRGBPalette(desired), nil
+	case ColorSpaceCMYK:
+		return makeComponentPalette(4, desired), nil
 	default:
 		return nil, fmt.Errorf("quantize: unsupported color space %d", info.ColorSpace)
 	}
@@ -180,6 +184,27 @@ func normalizeColormap(cm *Colormap, cs ColorSpace) (*Colormap, error) {
 			copy(b, cm.Maps[0][:cm.NumColors])
 		}
 		return &Colormap{Maps: [][]uint8{r, g, b}, NumColors: cm.NumColors}, nil
+	case ColorSpaceCMYK:
+		c := make([]byte, cm.NumColors)
+		m := make([]byte, cm.NumColors)
+		y := make([]byte, cm.NumColors)
+		k := make([]byte, cm.NumColors)
+		switch {
+		case len(cm.Maps) >= 4:
+			copy(c, cm.Maps[0][:cm.NumColors])
+			copy(m, cm.Maps[1][:cm.NumColors])
+			copy(y, cm.Maps[2][:cm.NumColors])
+			copy(k, cm.Maps[3][:cm.NumColors])
+		case len(cm.Maps) >= 3:
+			copy(c, cm.Maps[0][:cm.NumColors])
+			copy(m, cm.Maps[1][:cm.NumColors])
+			copy(y, cm.Maps[2][:cm.NumColors])
+		default:
+			copy(c, cm.Maps[0][:cm.NumColors])
+			copy(m, cm.Maps[0][:cm.NumColors])
+			copy(y, cm.Maps[0][:cm.NumColors])
+		}
+		return &Colormap{Maps: [][]uint8{c, m, y, k}, NumColors: cm.NumColors}, nil
 	default:
 		return nil, fmt.Errorf("quantize: unsupported color space %d", cs)
 	}
@@ -211,6 +236,34 @@ func makeRGBPalette(desired int) *Colormap {
 		}
 	}
 	return &Colormap{Maps: [][]uint8{r, g, b}, NumColors: numColors}
+}
+
+func makeComponentPalette(components, desired int) *Colormap {
+	levels := chooseComponentLevels(components, desired)
+	numColors := 1
+	for _, level := range levels {
+		numColors *= level
+	}
+	maps := make([][]byte, components)
+	for c := range maps {
+		maps[c] = make([]byte, 0, numColors)
+	}
+	values := make([]byte, components)
+	var emit func(component int)
+	emit = func(component int) {
+		if component == components {
+			for c, value := range values {
+				maps[c] = append(maps[c], value)
+			}
+			return
+		}
+		for i := 0; i < levels[component]; i++ {
+			values[component] = levelValue(i, levels[component])
+			emit(component + 1)
+		}
+	}
+	emit(0)
+	return &Colormap{Maps: maps, NumColors: numColors}
 }
 
 type rgbHistPoint struct {
@@ -465,6 +518,35 @@ func chooseRGBLevels(desired int) (int, int, int) {
 	return bestR, bestG, bestB
 }
 
+func chooseComponentLevels(components, desired int) []int {
+	levels := make([]int, components)
+	for i := range levels {
+		levels[i] = 1
+	}
+	if components <= 0 || desired <= 1 {
+		return levels
+	}
+	levels[0] = 2
+	product := 2
+	for {
+		best := -1
+		for i := 0; i < components; i++ {
+			nextProduct := product / levels[i] * (levels[i] + 1)
+			if nextProduct > desired {
+				continue
+			}
+			if best < 0 || levels[i] < levels[best] {
+				best = i
+			}
+		}
+		if best < 0 {
+			return levels
+		}
+		product = product / levels[best] * (levels[best] + 1)
+		levels[best]++
+	}
+}
+
 func levelValue(i, levels int) byte {
 	if levels <= 1 {
 		return 128
@@ -475,6 +557,10 @@ func levelValue(i, levels int) byte {
 func quantizeNearest(rows, indexed [][]byte, info *ImageInfo, cm *Colormap, adjusted func(x, y int, p []int)) {
 	cache := make(map[uint32]byte)
 	pixel := make([]int, 3)
+	if info.ColorSpace == ColorSpaceCMYK {
+		quantizeNearestComponents(rows, indexed, info, cm, adjusted, 4)
+		return
+	}
 	for y, row := range rows {
 		out := indexed[y]
 		if info.ColorSpace == ColorSpaceGrayscale {
@@ -506,6 +592,23 @@ func quantizeNearest(rows, indexed [][]byte, info *ImageInfo, cm *Colormap, adju
 			idx := nearestRGB(pixel[0], pixel[1], pixel[2], cm)
 			cache[key] = idx
 			out[x] = idx
+		}
+	}
+}
+
+func quantizeNearestComponents(rows, indexed [][]byte, info *ImageInfo, cm *Colormap, adjusted func(x, y int, p []int), components int) {
+	pixel := make([]int, components)
+	for y, row := range rows {
+		out := indexed[y]
+		for x := 0; x < info.Width; x++ {
+			i := x * components
+			for c := 0; c < components; c++ {
+				pixel[c] = int(row[i+c])
+			}
+			if adjusted != nil {
+				adjusted(x, y, pixel)
+			}
+			out[x] = nearestComponents(pixel, cm)
 		}
 	}
 }
@@ -590,6 +693,10 @@ func quantizeFloydSteinberg(rows, indexed [][]byte, info *ImageInfo, cm *Colorma
 		}
 		return
 	}
+	if info.ColorSpace == ColorSpaceCMYK {
+		quantizeFloydSteinbergComponents(rows, indexed, info, cm, 4)
+		return
+	}
 
 	curr := make([][3]int, width+2)
 	next := make([][3]int, width+2)
@@ -609,6 +716,33 @@ func quantizeFloydSteinberg(rows, indexed [][]byte, info *ImageInfo, cm *Colorma
 			addRGBError(next, x, errR, errG, errB, 3)
 			addRGBError(next, x+1, errR, errG, errB, 5)
 			addRGBError(next, x+2, errR, errG, errB, 1)
+		}
+		curr, next = next, curr
+		clear(next)
+	}
+}
+
+func quantizeFloydSteinbergComponents(rows, indexed [][]byte, info *ImageInfo, cm *Colormap, components int) {
+	width := info.Width
+	curr := make([]int, (width+2)*components)
+	next := make([]int, (width+2)*components)
+	pixel := make([]int, components)
+	for y, row := range rows {
+		out := indexed[y]
+		for x := 0; x < width; x++ {
+			i := x * components
+			for c := 0; c < components; c++ {
+				pixel[c] = clamp8(int(row[i+c]) + divRound(curr[(x+1)*components+c], 16))
+			}
+			idx := nearestComponents(pixel, cm)
+			out[x] = idx
+			for c := 0; c < components; c++ {
+				err := pixel[c] - int(cm.Maps[c][idx])
+				curr[(x+2)*components+c] += err * 7
+				next[x*components+c] += err * 3
+				next[(x+1)*components+c] += err * 5
+				next[(x+2)*components+c] += err
+			}
 		}
 		curr, next = next, curr
 		clear(next)
@@ -650,6 +784,23 @@ func nearestRGB(r, g, b int, cm *Colormap) byte {
 		dg := g - int(mg[i])
 		db := b - int(mb[i])
 		dist := dr*dr + dg*dg + db*db
+		if dist < bestDist {
+			bestDist = dist
+			bestIdx = i
+		}
+	}
+	return byte(bestIdx)
+}
+
+func nearestComponents(samples []int, cm *Colormap) byte {
+	bestIdx := 0
+	bestDist := maxInt()
+	for i := 0; i < cm.NumColors; i++ {
+		dist := 0
+		for c, sample := range samples {
+			d := clamp8(sample) - int(cm.Maps[c][i])
+			dist += d * d
+		}
 		if dist < bestDist {
 			bestDist = dist
 			bestIdx = i
