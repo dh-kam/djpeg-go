@@ -986,6 +986,45 @@ func TestDecodeRasterCMYKQuantizedOutput(t *testing.T) {
 	}
 }
 
+func TestDecodeRasterYCCKQuantizedOutput(t *testing.T) {
+	data := tinyAdobeCMYKJPEG(t, 2, [4]byte{0x11, 0x12, 0x13, 0x14})
+
+	cfg, err := djpeg.DecodeRasterConfig(
+		bytes.NewReader(data),
+		djpeg.WithOutputColorSpace(djpeg.ColorSpaceYCCK),
+		djpeg.WithQuantizeColors(8),
+		djpeg.WithDitherMode(djpeg.DitherNone),
+	)
+	if err != nil {
+		t.Fatalf("DecodeRasterConfig YCCK quantized failed: %v", err)
+	}
+	if !cfg.Quantized || cfg.PixelFormat != djpeg.PixelFormatIndexed8 || cfg.ColorSpace != djpeg.ColorSpaceYCCK {
+		t.Fatalf("YCCK quantized config = %+v, want indexed8 ycck quantized output", cfg)
+	}
+
+	raster, err := djpeg.DecodeRaster(
+		bytes.NewReader(data),
+		djpeg.WithOutputColorSpace(djpeg.ColorSpaceYCCK),
+		djpeg.WithQuantizeColors(8),
+		djpeg.WithDitherMode(djpeg.DitherNone),
+	)
+	if err != nil {
+		t.Fatalf("DecodeRaster YCCK quantized failed: %v", err)
+	}
+	if raster.Format != djpeg.PixelFormatIndexed8 || len(raster.Palette) == 0 || len(raster.Palette) > 8 {
+		t.Fatalf("YCCK quantized raster format=%s palette=%d, want indexed8 with 1..8 colors",
+			raster.Format, len(raster.Palette))
+	}
+	if _, ok := raster.Palette[0].(color.CMYK); !ok {
+		t.Fatalf("YCCK quantized palette entry type = %T, want color.CMYK", raster.Palette[0])
+	}
+	for i, idx := range raster.Pix {
+		if int(idx) >= len(raster.Palette) {
+			t.Fatalf("pixel %d index=%d outside palette length %d", i, idx, len(raster.Palette))
+		}
+	}
+}
+
 func TestDecodeRasterQuantizationModeOnePass(t *testing.T) {
 	data, err := os.ReadFile("tests/testdata/color_8x8_444.jpg")
 	if err != nil {

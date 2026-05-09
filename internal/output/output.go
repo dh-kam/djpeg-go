@@ -18,11 +18,12 @@ const (
 	ColorSpaceGrayscale ColorSpace = iota
 	ColorSpaceRGB
 	ColorSpaceCMYK
+	ColorSpaceYCCK
 )
 
 // Colormap holds an optional palette for indexed-color output.
 // Each entry in Maps is a slice of N uint8 values, one per channel.
-// Maps has length 1 for grayscale, 3 for RGB, or 4 for CMYK.
+// Maps has length 1 for grayscale, 3 for RGB, or 4 for CMYK/YCCK.
 type Colormap struct {
 	Maps      [][]uint8
 	NumColors int

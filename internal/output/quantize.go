@@ -102,7 +102,7 @@ func quantizeComponents(cs ColorSpace) (int, error) {
 		return 1, nil
 	case ColorSpaceRGB:
 		return 3, nil
-	case ColorSpaceCMYK:
+	case ColorSpaceCMYK, ColorSpaceYCCK:
 		return 4, nil
 	default:
 		return 0, fmt.Errorf("quantize: unsupported color space %d", cs)
@@ -136,7 +136,7 @@ func quantizeColormap(rows [][]byte, info *ImageInfo, opts QuantizeOptions) (*Co
 			return makeRGBMedianCutPalette(rows, info, desired)
 		}
 		return makeRGBPalette(desired), nil
-	case ColorSpaceCMYK:
+	case ColorSpaceCMYK, ColorSpaceYCCK:
 		return makeComponentPalette(4, desired), nil
 	default:
 		return nil, fmt.Errorf("quantize: unsupported color space %d", info.ColorSpace)
@@ -184,7 +184,7 @@ func normalizeColormap(cm *Colormap, cs ColorSpace) (*Colormap, error) {
 			copy(b, cm.Maps[0][:cm.NumColors])
 		}
 		return &Colormap{Maps: [][]uint8{r, g, b}, NumColors: cm.NumColors}, nil
-	case ColorSpaceCMYK:
+	case ColorSpaceCMYK, ColorSpaceYCCK:
 		c := make([]byte, cm.NumColors)
 		m := make([]byte, cm.NumColors)
 		y := make([]byte, cm.NumColors)
@@ -557,7 +557,7 @@ func levelValue(i, levels int) byte {
 func quantizeNearest(rows, indexed [][]byte, info *ImageInfo, cm *Colormap, adjusted func(x, y int, p []int)) {
 	cache := make(map[uint32]byte)
 	pixel := make([]int, 3)
-	if info.ColorSpace == ColorSpaceCMYK {
+	if info.ColorSpace == ColorSpaceCMYK || info.ColorSpace == ColorSpaceYCCK {
 		quantizeNearestComponents(rows, indexed, info, cm, adjusted, 4)
 		return
 	}
@@ -693,7 +693,7 @@ func quantizeFloydSteinberg(rows, indexed [][]byte, info *ImageInfo, cm *Colorma
 		}
 		return
 	}
-	if info.ColorSpace == ColorSpaceCMYK {
+	if info.ColorSpace == ColorSpaceCMYK || info.ColorSpace == ColorSpaceYCCK {
 		quantizeFloydSteinbergComponents(rows, indexed, info, cm, 4)
 		return
 	}
