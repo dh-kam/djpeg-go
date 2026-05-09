@@ -1040,6 +1040,21 @@ func (d *Decoder) SetDitherMode(mode DitherMode) error {
 	return nil
 }
 
+// SetQuantizationMode selects one-pass or two-pass generated-colormap
+// quantization. It must be called before StartDecompress.
+func (d *Decoder) SetQuantizationMode(mode QuantizationMode) error {
+	if err := d.ensureNotStarted("SetQuantizationMode"); err != nil {
+		return err
+	}
+	next := d.opts
+	next.QuantizationMode = mode
+	if err := d.validateOptionsCandidate(next); err != nil {
+		return err
+	}
+	d.opts = next
+	return nil
+}
+
 // SetColormap requests palette-indexed output with an external colormap. It
 // must be called before StartDecompress. Use NewColormap to switch palettes
 // after output has been prepared.
@@ -1418,6 +1433,10 @@ func (d *Decoder) quantizeRaster(src *Raster) (*Raster, error) {
 	if err != nil {
 		return nil, err
 	}
+	onePass, err := d.opts.QuantizationMode.onePass()
+	if err != nil {
+		return nil, err
+	}
 	colormap, err := outputColormapFromPalette(d.opts.Colormap, src.Format)
 	if err != nil {
 		return nil, err
@@ -1443,6 +1462,7 @@ func (d *Decoder) quantizeRaster(src *Raster) (*Raster, error) {
 		DesiredColors: d.opts.DesiredNumColors,
 		Colormap:      colormap,
 		Dither:        dither,
+		OnePass:       onePass,
 	})
 	if err != nil {
 		return nil, wrapQuantizeError(err)
@@ -1627,6 +1647,9 @@ func (d *Decoder) quantizationRequested() bool {
 }
 
 func (d *Decoder) validateQuantizationOptions() error {
+	if _, err := d.opts.QuantizationMode.onePass(); err != nil {
+		return err
+	}
 	if !d.quantizationRequested() && d.opts.DitherMode == DitherDefault {
 		return nil
 	}

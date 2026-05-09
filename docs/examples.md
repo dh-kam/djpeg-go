@@ -188,8 +188,8 @@ Select a dithering mode for quantized output:
 ```
 
 Supported dither modes are `fs`, `ordered`, and `none`. `--onepass` is accepted
-for libjpeg CLI compatibility; the current generated palette path is already a
-deterministic one-pass color-cube quantizer.
+for libjpeg CLI compatibility and selects the faster generated color-cube
+palette instead of the default image-derived two-pass palette.
 
 Use an external palette from a GIF or PPM file:
 

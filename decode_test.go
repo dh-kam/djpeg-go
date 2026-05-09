@@ -913,6 +913,34 @@ func TestDecodeRasterQuantizedOutput(t *testing.T) {
 	}
 }
 
+func TestDecodeRasterQuantizationModeOnePass(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/color_8x8_444.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	twoPass, err := djpeg.DecodeRaster(
+		bytes.NewReader(data),
+		djpeg.WithQuantizeColors(8),
+		djpeg.WithDitherMode(djpeg.DitherNone),
+	)
+	if err != nil {
+		t.Fatalf("DecodeRaster two-pass quantized failed: %v", err)
+	}
+	onePass, err := djpeg.DecodeRaster(
+		bytes.NewReader(data),
+		djpeg.WithQuantizeColors(8),
+		djpeg.WithDitherMode(djpeg.DitherNone),
+		djpeg.WithQuantizationMode(djpeg.QuantizationOnePass),
+	)
+	if err != nil {
+		t.Fatalf("DecodeRaster one-pass quantized failed: %v", err)
+	}
+	if bytes.Equal(twoPass.Pix, onePass.Pix) && palettesEqual(twoPass.Palette, onePass.Palette) {
+		t.Fatal("one-pass quantized raster matched default two-pass output")
+	}
+}
+
 func TestDecoderQuantizedScanlines(t *testing.T) {
 	data, err := os.ReadFile("tests/testdata/color_8x8_444.jpg")
 	if err != nil {
@@ -2874,6 +2902,20 @@ func loadPNGRGB(t *testing.T, path string) ([]byte, int, int) {
 		}
 	}
 	return pixels, width, height
+}
+
+func palettesEqual(a, b color.Palette) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		ar, ag, ab, aa := a[i].RGBA()
+		br, bg, bb, ba := b[i].RGBA()
+		if ar != br || ag != bg || ab != bb || aa != ba {
+			return false
+		}
+	}
+	return true
 }
 
 func rgbToGray(r, g, b byte) byte {

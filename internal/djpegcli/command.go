@@ -417,6 +417,7 @@ func prepareQuantization(opts *Options, info *output.ImageInfo, colormap *output
 		DesiredColors: desiredColors,
 		Colormap:      colormap,
 		Dither:        dither,
+		OnePass:       opts.OnePass || opts.Fast,
 	}, nil
 }
 

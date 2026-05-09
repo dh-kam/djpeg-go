@@ -2,6 +2,7 @@ package output
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -21,6 +22,7 @@ type QuantizeOptions struct {
 	DesiredColors int
 	Colormap      *Colormap
 	Dither        DitherMode
+	OnePass       bool
 }
 
 // ParseDitherMode converts a libjpeg-style dither name.
@@ -63,12 +65,15 @@ func QuantizeRows(rows [][]byte, info *ImageInfo, opts QuantizeOptions) ([][]byt
 		}
 	}
 
-	cm, err := quantizeColormap(info, opts)
+	cm, err := quantizeColormap(rows, info, opts)
 	if err != nil {
 		return nil, nil, err
 	}
 	dither := opts.Dither
 	if dither == DitherDefault {
+		dither = DitherFS
+	}
+	if !opts.OnePass && opts.Colormap == nil && info.ColorSpace == ColorSpaceRGB && dither == DitherOrdered {
 		dither = DitherFS
 	}
 
@@ -102,7 +107,7 @@ func quantizeComponents(cs ColorSpace) (int, error) {
 	}
 }
 
-func quantizeColormap(info *ImageInfo, opts QuantizeOptions) (*Colormap, error) {
+func quantizeColormap(rows [][]byte, info *ImageInfo, opts QuantizeOptions) (*Colormap, error) {
 	if opts.Colormap != nil {
 		return normalizeColormap(opts.Colormap, info.ColorSpace)
 	}
@@ -122,6 +127,9 @@ func quantizeColormap(info *ImageInfo, opts QuantizeOptions) (*Colormap, error) 
 	case ColorSpaceGrayscale:
 		return makeGrayPalette(desired), nil
 	case ColorSpaceRGB:
+		if !opts.OnePass {
+			return makeRGBMedianCutPalette(rows, info, desired)
+		}
 		return makeRGBPalette(desired), nil
 	default:
 		return nil, fmt.Errorf("quantize: unsupported color space %d", info.ColorSpace)
@@ -200,6 +208,234 @@ func makeRGBPalette(desired int) *Colormap {
 		}
 	}
 	return &Colormap{Maps: [][]uint8{r, g, b}, NumColors: numColors}
+}
+
+type rgbHistPoint struct {
+	r, g, b          int
+	count            int
+	sumR, sumG, sumB int64
+}
+
+type rgbColorBox struct {
+	points                 []rgbHistPoint
+	count                  int
+	sumR, sumG, sumB       int64
+	minR, maxR, minG, maxG int
+	minB, maxB             int
+}
+
+func makeRGBMedianCutPalette(rows [][]byte, info *ImageInfo, desired int) (*Colormap, error) {
+	points := collectRGBHistogram(rows, info)
+	if len(points) == 0 {
+		return makeRGBPalette(desired), nil
+	}
+	if len(points) == 1 {
+		p := points[0]
+		return &Colormap{
+			Maps:      [][]uint8{{byte(p.r)}, {byte(p.g)}, {byte(p.b)}},
+			NumColors: 1,
+		}, nil
+	}
+
+	boxes := []rgbColorBox{newRGBColorBox(points)}
+	for len(boxes) < desired {
+		idx := selectRGBSplitBox(boxes)
+		if idx < 0 {
+			break
+		}
+		left, right, ok := splitRGBBox(boxes[idx])
+		if !ok {
+			break
+		}
+		boxes[idx] = left
+		boxes = append(boxes, right)
+	}
+
+	r := make([]byte, len(boxes))
+	g := make([]byte, len(boxes))
+	b := make([]byte, len(boxes))
+	for i, box := range boxes {
+		count := int64(box.count)
+		r[i] = byte((box.sumR + count/2) / count)
+		g[i] = byte((box.sumG + count/2) / count)
+		b[i] = byte((box.sumB + count/2) / count)
+	}
+	return &Colormap{Maps: [][]uint8{r, g, b}, NumColors: len(boxes)}, nil
+}
+
+func collectRGBHistogram(rows [][]byte, info *ImageInfo) []rgbHistPoint {
+	type rgbBin struct {
+		count            int
+		sumR, sumG, sumB int64
+	}
+	bins := make(map[uint16]*rgbBin, rgbHistogramCapacity(info.Width, info.Height))
+	for _, row := range rows {
+		for x := 0; x < info.Width; x++ {
+			i := x * 3
+			r := row[i]
+			g := row[i+1]
+			b := row[i+2]
+			key := uint16(r>>3)<<11 | uint16(g>>2)<<5 | uint16(b>>3)
+			bin := bins[key]
+			if bin == nil {
+				bin = &rgbBin{}
+				bins[key] = bin
+			}
+			bin.count++
+			bin.sumR += int64(r)
+			bin.sumG += int64(g)
+			bin.sumB += int64(b)
+		}
+	}
+
+	points := make([]rgbHistPoint, 0, len(bins))
+	for _, bin := range bins {
+		count := int64(bin.count)
+		points = append(points, rgbHistPoint{
+			r:     int((bin.sumR + count/2) / count),
+			g:     int((bin.sumG + count/2) / count),
+			b:     int((bin.sumB + count/2) / count),
+			count: bin.count,
+			sumR:  bin.sumR,
+			sumG:  bin.sumG,
+			sumB:  bin.sumB,
+		})
+	}
+	sort.Slice(points, func(i, j int) bool {
+		return rgbPointLess(points[i], points[j], 0)
+	})
+	return points
+}
+
+func newRGBColorBox(points []rgbHistPoint) rgbColorBox {
+	box := rgbColorBox{
+		points: points,
+		minR:   255,
+		minG:   255,
+		minB:   255,
+	}
+	for _, p := range points {
+		box.count += p.count
+		box.sumR += p.sumR
+		box.sumG += p.sumG
+		box.sumB += p.sumB
+		if p.r < box.minR {
+			box.minR = p.r
+		}
+		if p.r > box.maxR {
+			box.maxR = p.r
+		}
+		if p.g < box.minG {
+			box.minG = p.g
+		}
+		if p.g > box.maxG {
+			box.maxG = p.g
+		}
+		if p.b < box.minB {
+			box.minB = p.b
+		}
+		if p.b > box.maxB {
+			box.maxB = p.b
+		}
+	}
+	return box
+}
+
+func selectRGBSplitBox(boxes []rgbColorBox) int {
+	best := -1
+	var bestScore int64
+	for i, box := range boxes {
+		if len(box.points) < 2 {
+			continue
+		}
+		score := int64(box.splitRangeScore()) * int64(box.count)
+		if best < 0 || score > bestScore || score == bestScore && box.count > boxes[best].count {
+			best = i
+			bestScore = score
+		}
+	}
+	return best
+}
+
+func splitRGBBox(box rgbColorBox) (rgbColorBox, rgbColorBox, bool) {
+	if len(box.points) < 2 {
+		return rgbColorBox{}, rgbColorBox{}, false
+	}
+	axis := box.splitAxis()
+	sort.Slice(box.points, func(i, j int) bool {
+		return rgbPointLess(box.points[i], box.points[j], axis)
+	})
+
+	half := box.count / 2
+	acc := 0
+	split := 1
+	for i, p := range box.points {
+		acc += p.count
+		if acc >= half {
+			split = i + 1
+			break
+		}
+	}
+	if split <= 0 {
+		split = 1
+	}
+	if split >= len(box.points) {
+		split = len(box.points) / 2
+	}
+	if split <= 0 || split >= len(box.points) {
+		return rgbColorBox{}, rgbColorBox{}, false
+	}
+	return newRGBColorBox(box.points[:split]), newRGBColorBox(box.points[split:]), true
+}
+
+func (box rgbColorBox) splitAxis() int {
+	rRange := (box.maxR - box.minR) * 2
+	gRange := (box.maxG - box.minG) * 3
+	bRange := box.maxB - box.minB
+	if gRange >= rRange && gRange >= bRange {
+		return 1
+	}
+	if rRange >= bRange {
+		return 0
+	}
+	return 2
+}
+
+func (box rgbColorBox) splitRangeScore() int {
+	rRange := (box.maxR - box.minR) * 2
+	gRange := (box.maxG - box.minG) * 3
+	bRange := box.maxB - box.minB
+	if gRange >= rRange && gRange >= bRange {
+		return gRange
+	}
+	if rRange >= bRange {
+		return rRange
+	}
+	return bRange
+}
+
+func rgbPointLess(a, b rgbHistPoint, axis int) bool {
+	switch axis {
+	case 1:
+		if a.g != b.g {
+			return a.g < b.g
+		}
+	case 2:
+		if a.b != b.b {
+			return a.b < b.b
+		}
+	default:
+		if a.r != b.r {
+			return a.r < b.r
+		}
+	}
+	if a.r != b.r {
+		return a.r < b.r
+	}
+	if a.g != b.g {
+		return a.g < b.g
+	}
+	return a.b < b.b
 }
 
 func chooseRGBLevels(desired int) (int, int, int) {
@@ -418,4 +654,21 @@ func maxInt() int {
 
 func minInt() int {
 	return -maxInt() - 1
+}
+
+func minInt2(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func rgbHistogramCapacity(width, height int) int {
+	if width <= 0 || height <= 0 {
+		return 0
+	}
+	if width > maxInt()/height {
+		return 32768
+	}
+	return minInt2(width*height, 32768)
 }

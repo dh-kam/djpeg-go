@@ -330,6 +330,31 @@ func TestDitherAndOnePassOptionsAllowQuantizedDecode(t *testing.T) {
 	}
 }
 
+func TestOnePassOptionUsesGeneratedPalette(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile("testdata/test_420.jpg")
+	if err != nil {
+		t.Skip("test_420.jpg not available:", err)
+	}
+
+	twoPass := decompressForOptionTest(t, data, &djpegcli.Options{
+		Format:     output.FormatPPM,
+		NumColors:  8,
+		DitherMode: "none",
+	})
+	onePass := decompressForOptionTest(t, data, &djpegcli.Options{
+		Format:     output.FormatPPM,
+		NumColors:  8,
+		DitherMode: "none",
+		OnePass:    true,
+	})
+
+	if bytes.Equal(twoPass, onePass) {
+		t.Fatal("--onepass output matched default two-pass quantized output")
+	}
+}
+
 func TestGIFOutputAutoQuantizesRGB(t *testing.T) {
 	t.Parallel()
 

@@ -328,6 +328,10 @@ if err != nil {
 _ = raster.Palette
 ```
 
+Generated RGB palette는 기본적으로 libjpeg 스타일의 image-derived two-pass
+선택을 사용합니다. `djpeg --onepass` 플래그와 같은 더 빠른 fixed color-cube
+경로가 필요하면 `WithQuantizationMode(libjpeg.QuantizationOnePass)`를 사용합니다.
+
 external colormap mode가 필요하면 palette를 직접 넘깁니다.
 
 ```go
@@ -777,6 +781,7 @@ opts := &libjpeg.Options{
 	QuantizeColors:    true,
 	DesiredNumColors:  64,
 	DitherMode:        libjpeg.DitherFloydSteinberg,
+	QuantizationMode:  libjpeg.QuantizationDefault,
 	RawDataOut:        false,
 	OutputGamma:       1.0,
 	BlockSmoothing:    libjpeg.BlockSmoothingDefault,
@@ -958,6 +963,7 @@ Progressive header는 `ReadHeader`와 `DecodeRasterConfig`로 조회할 수 있�
 | `--scale 1/2` | `libjpeg.WithScale(1, 2)` |
 | `--colors 64` | `libjpeg.WithQuantizeColors(64)` |
 | `--dither fs` | `libjpeg.WithDitherMode(libjpeg.DitherFloydSteinberg)` |
+| `--onepass` | `libjpeg.WithQuantizationMode(libjpeg.QuantizationOnePass)` |
 | `--compatibility poppler-pdf` | `libjpeg.WithCompatibility(libjpeg.CompatibilityPopplerPDF)` |
 | `--turbo-fancy` | `libjpeg.WithTurboFancy()` deprecated alias |
 | `--input-colorspace rgb` | `libjpeg.WithInputColorSpace(libjpeg.InputRGB)` |

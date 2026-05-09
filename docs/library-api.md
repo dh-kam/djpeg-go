@@ -332,6 +332,10 @@ if err != nil {
 _ = raster.Palette
 ```
 
+Generated RGB palettes use libjpeg-style two-pass, image-derived selection by
+default. Use `WithQuantizationMode(libjpeg.QuantizationOnePass)` to select the
+faster fixed color-cube path used by the `djpeg --onepass` flag.
+
 For external colormap mode, pass a palette explicitly:
 
 ```go
@@ -783,6 +787,7 @@ opts := &libjpeg.Options{
 	QuantizeColors:    true,
 	DesiredNumColors:  64,
 	DitherMode:        libjpeg.DitherFloydSteinberg,
+	QuantizationMode:  libjpeg.QuantizationDefault,
 	RawDataOut:        false,
 	OutputGamma:       1.0,
 	BlockSmoothing:    libjpeg.BlockSmoothingDefault,
@@ -967,6 +972,7 @@ decoding. Progressive headers can be inspected through `ReadHeader` and
 | `--scale 1/2` | `libjpeg.WithScale(1, 2)` |
 | `--colors 64` | `libjpeg.WithQuantizeColors(64)` |
 | `--dither fs` | `libjpeg.WithDitherMode(libjpeg.DitherFloydSteinberg)` |
+| `--onepass` | `libjpeg.WithQuantizationMode(libjpeg.QuantizationOnePass)` |
 | `--compatibility poppler-pdf` | `libjpeg.WithCompatibility(libjpeg.CompatibilityPopplerPDF)` |
 | `--turbo-fancy` | `libjpeg.WithTurboFancy()` deprecated alias |
 | `--input-colorspace rgb` | `libjpeg.WithInputColorSpace(libjpeg.InputRGB)` |

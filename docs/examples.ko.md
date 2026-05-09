@@ -188,8 +188,8 @@ Quantized output의 dithering mode를 선택합니다.
 ```
 
 지원하는 dither mode는 `fs`, `ordered`, `none`입니다. `--onepass`는 libjpeg CLI
-호환성을 위해 허용합니다. 현재 generated palette 경로는 deterministic one-pass
-color-cube quantizer입니다.
+호환성을 위해 허용하며, 기본 image-derived two-pass palette 대신 더 빠른 generated
+color-cube palette를 선택합니다.
 
 GIF 또는 PPM 파일에서 external palette를 사용합니다.
 

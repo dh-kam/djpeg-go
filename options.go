@@ -40,6 +40,7 @@ type Options struct {
 	QuantizeColors    bool
 	DesiredNumColors  int
 	DitherMode        DitherMode
+	QuantizationMode  QuantizationMode
 	Colormap          color.Palette
 	RawDataOut        bool
 	BufferedImage     bool
@@ -150,6 +151,15 @@ const (
 	DitherFloydSteinberg
 )
 
+// QuantizationMode selects libjpeg's generated-colormap quantization path.
+type QuantizationMode int
+
+const (
+	QuantizationDefault QuantizationMode = iota
+	QuantizationTwoPass
+	QuantizationOnePass
+)
+
 // BlockSmoothingMode controls progressive block smoothing.
 type BlockSmoothingMode int
 
@@ -178,12 +188,18 @@ func WithNoSmooth() Option {
 	return WithUpsampling(UpsamplingNearest)
 }
 
-// WithFast enables the currently implemented subset of libjpeg's -fast mode:
-// fast integer IDCT plus nearest-neighbor chroma upsampling.
+// WithFast enables libjpeg's -fast defaults: fast integer IDCT,
+// nearest-neighbor chroma upsampling, ordered dithering, and one-pass
+// quantization when quantized output is requested.
 func WithFast() Option {
 	return func(opts *Options) {
 		opts.IDCT = IDCTFast
 		opts.Upsampling = UpsamplingNearest
+		opts.QuantizationMode = QuantizationOnePass
+		opts.DitherMode = DitherOrdered
+		if !opts.QuantizeColors {
+			opts.DesiredNumColors = 216
+		}
 	}
 }
 
@@ -293,6 +309,14 @@ func WithQuantizeColors(desiredNumColors int) Option {
 func WithDitherMode(mode DitherMode) Option {
 	return func(opts *Options) {
 		opts.DitherMode = mode
+	}
+}
+
+// WithQuantizationMode selects one-pass or two-pass generated-colormap
+// quantization, mirroring libjpeg's two_pass_quantize parameter.
+func WithQuantizationMode(mode QuantizationMode) Option {
+	return func(opts *Options) {
+		opts.QuantizationMode = mode
 	}
 }
 
@@ -675,6 +699,17 @@ func (m BlockSmoothingMode) String() string {
 		return "disabled"
 	default:
 		return fmt.Sprintf("unknown(%d)", m)
+	}
+}
+
+func (m QuantizationMode) onePass() (bool, error) {
+	switch m {
+	case QuantizationDefault, QuantizationTwoPass:
+		return false, nil
+	case QuantizationOnePass:
+		return true, nil
+	default:
+		return false, fmt.Errorf("%w: unknown quantization mode %d", ErrInvalidOption, m)
 	}
 }
 
