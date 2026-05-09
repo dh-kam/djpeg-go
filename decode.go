@@ -1383,6 +1383,13 @@ func (d *Decoder) applyOptions() error {
 }
 
 func (d *Decoder) applyDecompressionParameters() error {
+	if d.opts.RawDataOut {
+		scale, _, err := d.opts.scaleSize()
+		if err != nil {
+			return err
+		}
+		d.dec.SetScale(uint(scale), 8)
+	}
 	if d.opts.OutputGamma != 0 {
 		if d.opts.OutputGamma <= 0 || math.IsNaN(d.opts.OutputGamma) || math.IsInf(d.opts.OutputGamma, 0) {
 			return fmt.Errorf("%w: output gamma must be positive and finite", ErrInvalidOption)
@@ -1625,6 +1632,9 @@ func (d *Decoder) applyOutputColorSpaceToConfig(cfg *Config) error {
 }
 
 func (d *Decoder) applyScaleToConfig(cfg *Config) error {
+	if d.opts.RawDataOut {
+		return nil
+	}
 	scale, enabled, err := d.opts.scaleSize()
 	if err != nil {
 		return err
@@ -1684,10 +1694,8 @@ func (d *Decoder) validateRawDataOptions() error {
 	if d.opts.BufferedImage {
 		return fmt.Errorf("%w: raw data output with buffered image mode is not supported", ErrUnsupported)
 	}
-	if _, enabled, err := d.opts.scaleSize(); err != nil {
+	if _, _, err := d.opts.scaleSize(); err != nil {
 		return err
-	} else if enabled {
-		return fmt.Errorf("%w: raw data output with facade scaling is not supported", ErrUnsupported)
 	}
 	return nil
 }

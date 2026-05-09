@@ -1,5 +1,7 @@
 package huff
 
+import "math"
+
 const (
 	fix16_0_071888074 int64 = 589
 	fix16_0_138617169 int64 = 1136
@@ -26,6 +28,44 @@ const (
 	fix16_2_562915447 int64 = 20995
 	fix16_3_141271809 int64 = 25733
 )
+
+// IDCTScaledISlowImpl performs a generic ISLOW dequantization plus scaled
+// inverse DCT for block sizes that do not yet have a dedicated IJG kernel.
+func IDCTScaledISlowImpl(coefBlock []JCOEF, quantptr *ISlowMultTable, outputBuf []BlockRow, outputCol, outputRows, outputCols int, rangeLimit *RangeLimitTable) {
+	if outputRows <= 0 || outputCols <= 0 {
+		return
+	}
+	var dequant [DCTSize2]float64
+	for i := 0; i < DCTSize2; i++ {
+		dequant[i] = float64(coefBlock[i]) * float64(quantptr[i])
+	}
+
+	const invSqrt2 = 0.7071067811865476
+	rowDenom := 2 * float64(outputRows)
+	colDenom := 2 * float64(outputCols)
+	for outY := 0; outY < outputRows; outY++ {
+		outptr := outputBuf[outY]
+		for outX := 0; outX < outputCols; outX++ {
+			sum := 0.0
+			for v := 0; v < DCTSize; v++ {
+				cv := 1.0
+				if v == 0 {
+					cv = invSqrt2
+				}
+				cosY := math.Cos(float64(2*outY+1) * float64(v) * math.Pi / rowDenom)
+				for u := 0; u < DCTSize; u++ {
+					cu := 1.0
+					if u == 0 {
+						cu = invSqrt2
+					}
+					cosX := math.Cos(float64(2*outX+1) * float64(u) * math.Pi / colDenom)
+					sum += cu * cv * dequant[v*DCTSize+u] * cosX * cosY
+				}
+			}
+			outptr[outputCol+outX] = rangeLimitGet(rangeLimit, int(math.Round(sum/4))+RangeCenter)
+		}
+	}
+}
 
 // IDCT16x16Impl performs IJG's 16x16 scaled ISLOW IDCT.
 func IDCT16x16Impl(coefBlock []JCOEF, quantptr *ISlowMultTable, outputBuf []BlockRow, outputCol int, rangeLimit *RangeLimitTable) {

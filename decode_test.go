@@ -320,11 +320,14 @@ func TestDecoderMutableRawAndBufferedParameters(t *testing.T) {
 	if err := dec.SetRawDataOutput(true); err != nil {
 		t.Fatalf("SetRawDataOutput failed: %v", err)
 	}
-	if err := dec.SetScale(1, 2); !errors.Is(err, djpeg.ErrUnsupported) {
-		t.Fatalf("SetScale with raw output error = %v, want ErrUnsupported", err)
+	if err := dec.SetScale(1, 2); err != nil {
+		t.Fatalf("SetScale with raw output failed: %v", err)
 	}
 	if err := dec.StartDecompress(); err != nil {
 		t.Fatalf("StartDecompress failed: %v", err)
+	}
+	if cfg := dec.OutputConfig(); cfg.Width != 8 || cfg.Height != 8 || cfg.MinDCTHScaledSize != 4 || cfg.MinDCTVScaledSize != 4 {
+		t.Fatalf("scaled raw output config = %+v, want 8x8 with 4x4 DCT scaling", cfg)
 	}
 	components, err := dec.ReadRawData()
 	if err != nil {
@@ -1314,6 +1317,27 @@ func TestDecodeRawComponents(t *testing.T) {
 	}
 }
 
+func TestDecodeRawComponentsWithScale(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	components, cfg, err := djpeg.DecodeRawComponents(bytes.NewReader(data), djpeg.WithScale(1, 2))
+	if err != nil {
+		t.Fatalf("DecodeRawComponents scaled failed: %v", err)
+	}
+	if cfg.Width != 4 || cfg.Height != 4 || cfg.MinDCTHScaledSize != 4 || cfg.MinDCTVScaledSize != 4 {
+		t.Fatalf("scaled raw config = %+v, want 4x4 with 4x4 DCT scaling", cfg)
+	}
+	if len(components) != 1 {
+		t.Fatalf("scaled raw component count = %d, want 1", len(components))
+	}
+	if comp := components[0]; comp.Width != 4 || comp.Height != 4 || comp.Stride != 4 || len(comp.Pix) != 16 {
+		t.Fatalf("scaled raw component = %+v pix=%d, want 4x4 stride 4 len 16", comp, len(comp.Pix))
+	}
+}
+
 func TestDecoderRawDataLifecycle(t *testing.T) {
 	data, err := os.ReadFile("tests/testdata/color_8x8_444.jpg")
 	if err != nil {
@@ -1452,9 +1476,6 @@ func TestDecodeRawComponentsInvalidOptions(t *testing.T) {
 	}
 	if _, _, err := djpeg.DecodeRawComponents(bytes.NewReader(data), djpeg.WithQuantizeColors(8)); !errors.Is(err, djpeg.ErrInvalidOption) {
 		t.Fatalf("DecodeRawComponents quantized error = %v, want ErrInvalidOption", err)
-	}
-	if _, _, err := djpeg.DecodeRawComponents(bytes.NewReader(data), djpeg.WithScale(1, 2)); !errors.Is(err, djpeg.ErrUnsupported) {
-		t.Fatalf("DecodeRawComponents scaled error = %v, want ErrUnsupported", err)
 	}
 }
 

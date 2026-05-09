@@ -178,6 +178,12 @@ func (dec *Decoder) SetRawDataOut(enabled bool) {
 	dec.d.RawDataOut = enabled
 }
 
+// SetScale configures libjpeg's scale_num and scale_denom parameters.
+func (dec *Decoder) SetScale(numerator, denominator uint) {
+	dec.d.ScaleNum = numerator
+	dec.d.ScaleDenom = denominator
+}
+
 // SetOutputGamma configures libjpeg's output_gamma parameter.
 func (dec *Decoder) SetOutputGamma(gamma float64) {
 	dec.d.OutputGamma = gamma
@@ -1117,6 +1123,8 @@ func (dec *Decoder) routeBlocks(blocks []huff.Block, mcuCol int) {
 				for xIndex := 0; xIndex < usefulWidth; xIndex++ {
 					if dctSize == 16 && dctStep == 16 {
 						huff.IDCT16x16Impl(blocks[blkIdx+xIndex][:], qt, outputBuf, outputCol, rl)
+					} else if dctSize != huff.DCTSize || dctStep != huff.DCTSize {
+						huff.IDCTScaledISlowImpl(blocks[blkIdx+xIndex][:], qt, outputBuf, outputCol, dctSize, dctStep, rl)
 					} else {
 						huff.IDCTISlowImpl(blocks[blkIdx+xIndex][:], qt, outputBuf, outputCol, rl)
 					}
@@ -1136,11 +1144,15 @@ func (dec *Decoder) routeBlocks(blocks []huff.Block, mcuCol int) {
 				outputCol := startCol
 				for xIndex := 0; xIndex < usefulWidth; xIndex++ {
 					coefBlock := blocks[blkIdx+xIndex][:]
-					switch dec.idctMethod {
-					case huff.IDCTIFast:
-						huff.IDCTIFastImpl(coefBlock, dec.multTablesIFast[ci], outputBuf, outputCol, rl)
-					case huff.IDCTFloat:
-						huff.IDCTFloatImpl(coefBlock, dec.multTablesFloat[ci], outputBuf, outputCol, rl)
+					if dctSize != huff.DCTSize || dctStep != huff.DCTSize {
+						huff.IDCTScaledISlowImpl(coefBlock, dec.multTablesISlow[ci], outputBuf, outputCol, dctSize, dctStep, rl)
+					} else {
+						switch dec.idctMethod {
+						case huff.IDCTIFast:
+							huff.IDCTIFastImpl(coefBlock, dec.multTablesIFast[ci], outputBuf, outputCol, rl)
+						case huff.IDCTFloat:
+							huff.IDCTFloatImpl(coefBlock, dec.multTablesFloat[ci], outputBuf, outputCol, rl)
+						}
 					}
 					outputCol += dctStep
 				}
@@ -1933,6 +1945,12 @@ func (dec *Decoder) buildIDCTTables() {
 		dec.multTablesFloat = make([]*huff.FloatMultTable, numComps)
 		for ci := 0; ci < numComps; ci++ {
 			dec.multTablesFloat[ci] = huff.BuildFloatMultTable(dec.quantTables[ci])
+		}
+	}
+	if dec.multTablesISlow == nil {
+		dec.multTablesISlow = make([]*huff.ISlowMultTable, numComps)
+		for ci := 0; ci < numComps; ci++ {
+			dec.multTablesISlow[ci] = huff.BuildISlowMultTable(dec.quantTables[ci])
 		}
 	}
 }

@@ -466,8 +466,9 @@ for dec.OutputScanline() < dec.OutputConfig().Height {
 }
 ```
 
-Raw component output은 quantized output과 함께 사용할 수 없습니다. facade의
-post-decode `WithScale` 경로도 raw mode에서는 비활성화됩니다.
+Raw component output은 quantized output과 함께 사용할 수 없습니다. `WithScale`은
+raw mode에서 libjpeg 호환 DCT-scaled output dimension으로 지원하며, post-decode
+resize는 적용하지 않습니다.
 
 ## Compatibility Mode
 
