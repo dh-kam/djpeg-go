@@ -31,12 +31,16 @@ func MarkerAPP(n int) (int, error) {
 	return MarkerAPP0 + n, nil
 }
 
-// Marker is saved APPn or COM marker payload data from a JPEG header.
+// Marker is APPn or COM marker payload data from a JPEG header.
 type Marker struct {
 	Code           int
 	OriginalLength uint
 	Data           []byte
 }
+
+// MarkerProcessor handles an APPn or COM marker while ReadHeader scans the
+// JPEG header. Returning an error stops header parsing.
+type MarkerProcessor func(Marker) error
 
 func validSavedMarkerCode(code int) bool {
 	return code == MarkerCOM || (code >= MarkerAPP0 && code <= MarkerAPP15)

@@ -93,6 +93,7 @@ type Raster struct {
 	Stride int
 	Rect   image.Rectangle
 	Format PixelFormat
+	Palette color.Palette // PixelFormatIndexed8에서 설정됨
 }
 ```
 
@@ -100,6 +101,7 @@ type Raster struct {
 
 - `PixelFormatGray8`: 픽셀당 1 byte, 일반적인 row stride는 `width`
 - `PixelFormatRGB24`: 픽셀당 R, G, B byte, 일반적인 row stride는 `width*3`
+- `PixelFormatIndexed8`: 픽셀당 palette index 1 byte, `Raster.Palette` 확인
 
 row를 순회할 때는 항상 tightly packed라고 가정하지 말고 `Stride`를 사용하세요.
 
@@ -119,6 +121,8 @@ for y := 0; y < height; y++ {
 		useGrayRow(row[:width])
 	case libjpeg.PixelFormatRGB24:
 		useRGBRow(row[:width*3])
+	case libjpeg.PixelFormatIndexed8:
+		useIndexedRow(row[:width], raster.Palette)
 	}
 }
 ```
@@ -155,8 +159,18 @@ type Config struct {
 	Stride           int
 	PixelFormat      PixelFormat
 	ColorSpace       ColorSpace
+	ImageWidth       int
+	ImageHeight      int
 	InputComponents  int
 	InputColorSpace  ColorSpace
+	DataPrecision    int
+	MaxHSampFactor   int
+	MaxVSampFactor   int
+	MinDCTHScaledSize int
+	MinDCTVScaledSize int
+	BlockSize        int
+	ScaleNum         uint
+	ScaleDenom       uint
 	Baseline         bool
 	Progressive      bool
 	Arithmetic       bool
@@ -170,8 +184,18 @@ type Config struct {
 	YDensity         uint16
 	SawAdobeMarker   bool
 	AdobeTransform   uint8
+	RecOutbufHeight  int
+	Quantized        bool
+	DesiredNumColors int
+	ActualNumColors  int
+	RawDataOut       bool
+	OutputGamma      float64
+	DoBlockSmoothing bool
 }
 ```
+
+`Width`와 `Height`는 선택된 output geometry입니다. `ImageWidth`와
+`ImageHeight`는 JPEG header의 원본 크기를 유지합니다.
 
 ## Options
 
@@ -209,6 +233,10 @@ libjpeg.WithGrayscaleOutput()
 libjpeg.WithRGBOutput()
 libjpeg.WithMaxMemory(20_000_000)
 libjpeg.WithScale(1, 2)
+libjpeg.WithQuantizeColors(256)
+libjpeg.WithRawDataOutput()
+libjpeg.WithOutputGamma(2.2)
+libjpeg.WithBlockSmoothing(false)
 ```
 
 `WithNoSmooth`는 CLI `--nosmooth`에 대응합니다. `WithFast`는 현재 구현된 CLI
@@ -231,6 +259,182 @@ raster, err = libjpeg.DecodeRaster(r, libjpeg.WithGrayscaleOutput())
 `WithScale`은 libjpeg 스타일 output scaling을 적용합니다. 8x8 DCT JPEG에서는
 ratio가 `1/8`부터 `16/8`까지의 지원 scale grid 중 가까운 값으로 매핑됩니다.
 현재 구현은 먼저 decode한 뒤 output raster를 resampling합니다.
+
+`WithOutputGamma`와 `WithBlockSmoothing`은 libjpeg decompressor parameter에
+대응합니다. Block smoothing은 progressive output pass에서 의미가 있으며,
+progressive decoding은 현재도 `ErrUnsupported`로 보고됩니다.
+
+## Buffered-Image Output Pass
+
+`WithBufferedImage`는 libjpeg의 `buffered_image` mode를 public facade 수준에서
+대응합니다. `StartDecompress` 이후 `StartOutput`을 호출하고 scanline을 읽은 다음
+`FinishOutput`을 호출합니다. decoder는 baseline image raster를 보관하므로 output
+pass를 반복하거나 pass 사이에서 quantized colormap을 바꿀 수 있습니다.
+
+```go
+dec := libjpeg.NewDecoder(r, libjpeg.WithBufferedImage())
+if _, err := dec.ReadHeader(); err != nil {
+	return err
+}
+if err := dec.StartDecompress(); err != nil {
+	return err
+}
+
+if ok, err := dec.StartOutput(dec.InputScanNumber()); err != nil || !ok {
+	return err
+}
+row := make([]byte, dec.OutputConfig().Stride)
+for dec.OutputScanline() < dec.OutputConfig().Height {
+	if _, err := dec.ReadScanlines([][]byte{row}); err != nil {
+		return err
+	}
+	// 다음 ReadScanlines 호출 전에 row를 사용합니다.
+}
+if ok, err := dec.FinishOutput(); err != nil || !ok {
+	return err
+}
+return dec.FinishDecompress()
+```
+
+현재는 baseline JPEG replay path입니다. Progressive input은 아직
+`ErrUnsupported`로 보고되므로 progressive incremental display는 미지원입니다.
+
+## Quantized Output
+
+`WithQuantizeColors`는 libjpeg decompressor parameter인 `quantize_colors`와
+`desired_number_of_colors`에 대응합니다. 반환 raster는 `PixelFormatIndexed8`이고
+Go `color.Palette`를 함께 제공합니다.
+
+```go
+raster, err := libjpeg.DecodeRaster(
+	r,
+	libjpeg.WithQuantizeColors(64),
+	libjpeg.WithDitherMode(libjpeg.DitherFloydSteinberg),
+)
+if err != nil {
+	return err
+}
+
+_ = raster.Palette
+```
+
+external colormap mode가 필요하면 palette를 직접 넘깁니다.
+
+```go
+raster, err := libjpeg.DecodeRaster(
+	r,
+	libjpeg.WithColormap(color.Palette{
+		color.RGBA{0, 0, 0, 255},
+		color.RGBA{255, 255, 255, 255},
+	}),
+	libjpeg.WithDitherMode(libjpeg.DitherNone),
+)
+```
+
+`Decoder.NewColormap`은 buffered quantized raster 경로에서 libjpeg의
+`jpeg_new_colormap()`에 대응합니다. 새 external palette로 전환하고
+`OutputScanline`을 0으로 되돌려 다른 indexed pass를 출력할 수 있게 합니다.
+
+```go
+dec := libjpeg.NewDecoder(r, libjpeg.WithQuantizeColors(64))
+if _, err := dec.ReadHeader(); err != nil {
+	return err
+}
+if err := dec.StartDecompress(); err != nil {
+	return err
+}
+
+if err := dec.NewColormap(color.Palette{
+	color.RGBA{0, 0, 0, 255},
+	color.RGBA{255, 255, 255, 255},
+}); err != nil {
+	return err
+}
+```
+
+Quantized output은 현재 grayscale과 RGB output을 지원합니다. CMYK/YCCK
+quantized output은 `ErrUnsupported`를 반환합니다.
+
+## Coefficient Output
+
+`DecodeCoefficients`와 `Decoder.ReadCoefficients`는 baseline
+`jpeg_read_coefficients()` 경로에 대응합니다. 반환 block은 IDCT, color
+conversion, upsampling 이전의 quantized DCT coefficient이며 natural row-major
+순서입니다.
+
+```go
+components, cfg, err := libjpeg.DecodeCoefficients(r)
+if err != nil {
+	return err
+}
+_ = cfg
+
+for _, component := range components {
+	for by := 0; by < component.HeightInBlocks; by++ {
+		row := component.Blocks[by*component.WidthInBlocks : (by+1)*component.WidthInBlocks]
+		useCoefficientBlocks(component.Component.Index, row)
+	}
+}
+```
+
+decoder lifecycle에서 직접 사용하려면 다음처럼 호출합니다.
+
+```go
+dec := libjpeg.NewDecoder(r)
+if _, err := dec.ReadHeader(); err != nil {
+	return err
+}
+components, err := dec.ReadCoefficients()
+if err != nil {
+	return err
+}
+_ = components
+```
+
+Progressive와 arithmetic-coded coefficient decoding은 아직 `ErrUnsupported`로
+보고됩니다.
+
+## Raw Component Output
+
+`DecodeRawComponents`와 `Decoder.ReadRawData`는 libjpeg의 `raw_data_out` /
+`jpeg_read_raw_data()` 경로에 대응합니다. 반환되는 component는 color conversion과
+upsampling 이전의 downsampled plane입니다.
+
+```go
+components, cfg, err := libjpeg.DecodeRawComponents(r)
+if err != nil {
+	return err
+}
+_ = cfg.RawDataOut
+
+for _, component := range components {
+	for y := 0; y < component.Height; y++ {
+		row := component.Pix[y*component.Stride : y*component.Stride+component.Width]
+		useRawComponentRow(component.Component.Index, row)
+	}
+}
+```
+
+scanline lifecycle에서 직접 사용하려면 다음처럼 호출합니다.
+
+```go
+dec := libjpeg.NewDecoder(r, libjpeg.WithRawDataOutput())
+if _, err := dec.ReadHeader(); err != nil {
+	return err
+}
+if err := dec.StartDecompress(); err != nil {
+	return err
+}
+components, err := dec.ReadRawData()
+if err != nil {
+	return err
+}
+_ = components
+return dec.FinishDecompress()
+```
+
+Raw component output은 quantized output과 함께 사용할 수 없습니다. facade의
+post-decode `WithScale` 경로도 raw mode에서는 비활성화됩니다.
 
 ## Compatibility Mode
 
@@ -395,6 +599,32 @@ for _, marker := range dec.Markers() {
 APP0부터 APP15까지와 COM marker만 허용합니다. APP0과 APP14는 저장하지 않아도
 JFIF/Adobe 동작을 위해 내부적으로 계속 파싱됩니다.
 
+## Marker Processors
+
+`WithMarkerProcessor`와 `Decoder.SetMarkerProcessor`는 APPn/COM marker에 대한
+libjpeg의 `jpeg_set_marker_processor()` lifecycle에 대응합니다. `ReadHeader`
+전에 processor를 설정하면 callback은 marker payload의 복사본을 받고, error를
+반환해 header parsing을 중단할 수 있습니다.
+
+```go
+dec := libjpeg.NewDecoder(
+	r,
+	libjpeg.WithMarkerProcessor(libjpeg.MarkerAPP2, func(marker libjpeg.Marker) error {
+		_ = marker.Code
+		_ = marker.OriginalLength
+		_ = marker.Data
+		return nil
+	}),
+)
+
+if _, err := dec.ReadHeader(); err != nil {
+	return err
+}
+```
+
+같은 marker code에 marker processor와 saved-marker retention을 함께 설정하면
+processor가 우선합니다.
+
 ## Tables
 
 `ReadHeader` 이후에는 parsing된 DQT와 DHT table을 복사본으로 확인할 수 있습니다.
@@ -418,6 +648,15 @@ if ok {
 	_ = dc.Bits
 	_ = dc.Values
 }
+
+for _, component := range dec.Components() {
+	_ = component.ID
+	_ = component.HSampFactor
+	_ = component.VSampFactor
+	_ = component.QuantizationTableIndex
+}
+
+_ = dec.RestartInterval()
 ```
 
 ## Options Struct
@@ -434,6 +673,12 @@ opts := &libjpeg.Options{
 	OutputColorSpace:  libjpeg.ColorSpaceUnknown,
 	ColorTransform:    libjpeg.ColorTransformDefault,
 	ChromaIDCTScaling: libjpeg.ChromaIDCTScalingDefault,
+	QuantizeColors:    true,
+	DesiredNumColors:  64,
+	DitherMode:        libjpeg.DitherFloydSteinberg,
+	RawDataOut:        false,
+	OutputGamma:       1.0,
+	BlockSmoothing:    libjpeg.BlockSmoothingDefault,
 }
 
 raster, err := libjpeg.DecodeRasterWithOptions(r, opts)
@@ -444,6 +689,7 @@ CLI 스타일 문자열은 다음 함수로 파싱할 수 있습니다.
 ```go
 idct, err := libjpeg.ParseIDCTMethod("int")
 space, err := libjpeg.ParseInputColorSpace("rgb")
+dither, err := libjpeg.ParseDitherMode("fs")
 ```
 
 ## Scanline API
@@ -463,9 +709,29 @@ if err != nil {
 }
 fmt.Println(header.Width, header.Height)
 
+// libjpeg return code가 필요하면 low-level form을 사용할 수 있습니다.
+header, status, err := dec.ReadHeaderRequireImage(true)
+if err != nil {
+	return err
+}
+_ = status
+
+dimensions, err := dec.CalcOutputDimensions()
+if err != nil {
+	return err
+}
+_ = dimensions.RecOutbufHeight
+
 if err := dec.Start(); err != nil {
 	return err
 }
+
+xOffset, width, err := dec.CropScanline(0, header.Width)
+if err != nil {
+	return err
+}
+_ = xOffset
+_ = width
 
 out := dec.OutputConfig()
 row := make([]byte, out.Stride)
@@ -488,9 +754,30 @@ if err := dec.Finish(); err != nil {
 }
 ```
 
+고급 호출자는 `ConsumeInput`으로 marker input을 직접 진행할 수 있습니다. 이는
+libjpeg의 `jpeg_consume_input()` return code에 대응합니다.
+
+```go
+status, err := dec.ConsumeInput()
+if err != nil {
+	return err
+}
+if status == libjpeg.InputReachedSOS {
+	_ = dec.Header()
+}
+```
+
+`CalcOutputDimensions`는 libjpeg의 `jpeg_calc_output_dimensions()`에
+대응합니다. decompression을 시작하기 전에 최종 output geometry가 필요하면
+`ReadHeader` 이후 호출하세요.
+
 `SkipScanlines`는 libjpeg의 `jpeg_skip_scanlines()`에 대응합니다. output
 scanline cursor를 전진시키고, 이미지 하단에서 멈추며, 실제로 skip한 row 수를
 반환합니다.
+
+`CropScanline`은 facade 수준에서 libjpeg의 `jpeg_crop_scanline()`에 대응합니다.
+`Start` 이후, row를 읽거나 skip하기 전에 호출하세요. 반환된 offset과 width는
+실제 crop 영역이며, width는 output image의 오른쪽 경계에 맞게 clamp됩니다.
 
 `Finish`를 호출하기 전에 예상 output row를 모두 읽으세요. 중간에 멈추면 decoder가
 전체 이미지를 소비하지 않았다고 보고 "too little data" 오류를 반환할 수
@@ -548,6 +835,8 @@ _ = img
 | `--rgb` | `libjpeg.WithRGBOutput()` |
 | `--maxmemory 20m` | `limit, _ := libjpeg.ParseMemoryLimit("20m"); libjpeg.WithMaxMemory(limit)` |
 | `--scale 1/2` | `libjpeg.WithScale(1, 2)` |
+| `--colors 64` | `libjpeg.WithQuantizeColors(64)` |
+| `--dither fs` | `libjpeg.WithDitherMode(libjpeg.DitherFloydSteinberg)` |
 | `--compatibility poppler-pdf` | `libjpeg.WithCompatibility(libjpeg.CompatibilityPopplerPDF)` |
 | `--turbo-fancy` | `libjpeg.WithTurboFancy()` deprecated alias |
 | `--input-colorspace rgb` | `libjpeg.WithInputColorSpace(libjpeg.InputRGB)` |

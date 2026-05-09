@@ -96,6 +96,7 @@ type Raster struct {
 	Stride int
 	Rect   image.Rectangle
 	Format PixelFormat
+	Palette color.Palette // set for PixelFormatIndexed8
 }
 ```
 
@@ -103,6 +104,7 @@ type Raster struct {
 
 - `PixelFormatGray8`: one byte per pixel, row stride is usually `width`
 - `PixelFormatRGB24`: R, G, B bytes per pixel, row stride is usually `width*3`
+- `PixelFormatIndexed8`: one palette index per pixel; inspect `Raster.Palette`
 
 Always use `Stride` to walk rows instead of assuming tightly packed rows.
 
@@ -122,6 +124,8 @@ for y := 0; y < height; y++ {
 		useGrayRow(row[:width])
 	case libjpeg.PixelFormatRGB24:
 		useRGBRow(row[:width*3])
+	case libjpeg.PixelFormatIndexed8:
+		useIndexedRow(row[:width], raster.Palette)
 	}
 }
 ```
@@ -158,8 +162,18 @@ type Config struct {
 	Stride           int
 	PixelFormat      PixelFormat
 	ColorSpace       ColorSpace
+	ImageWidth       int
+	ImageHeight      int
 	InputComponents  int
 	InputColorSpace  ColorSpace
+	DataPrecision    int
+	MaxHSampFactor   int
+	MaxVSampFactor   int
+	MinDCTHScaledSize int
+	MinDCTVScaledSize int
+	BlockSize        int
+	ScaleNum         uint
+	ScaleDenom       uint
 	Baseline         bool
 	Progressive      bool
 	Arithmetic       bool
@@ -173,8 +187,18 @@ type Config struct {
 	YDensity         uint16
 	SawAdobeMarker   bool
 	AdobeTransform   uint8
+	RecOutbufHeight  int
+	Quantized        bool
+	DesiredNumColors int
+	ActualNumColors  int
+	RawDataOut       bool
+	OutputGamma      float64
+	DoBlockSmoothing bool
 }
 ```
+
+`Width` and `Height` describe the selected output geometry. `ImageWidth` and
+`ImageHeight` preserve the original JPEG header dimensions.
 
 ## Options
 
@@ -212,6 +236,10 @@ libjpeg.WithGrayscaleOutput()
 libjpeg.WithRGBOutput()
 libjpeg.WithMaxMemory(20_000_000)
 libjpeg.WithScale(1, 2)
+libjpeg.WithQuantizeColors(256)
+libjpeg.WithRawDataOutput()
+libjpeg.WithOutputGamma(2.2)
+libjpeg.WithBlockSmoothing(false)
 ```
 
 `WithNoSmooth` maps to CLI `--nosmooth`. `WithFast` maps to the currently
@@ -234,6 +262,184 @@ scan data and component buffers. CLI-style values can be parsed with
 `WithScale` applies libjpeg-style output scaling. For 8x8 DCT JPEGs, ratios map
 to the closest supported scale size from `1/8` through `16/8`. The current
 implementation decodes first and then resamples the output raster.
+
+`WithOutputGamma` and `WithBlockSmoothing` mirror libjpeg decompressor
+parameters. Block smoothing affects progressive output passes once progressive
+decoding is available; the current decoder still reports progressive JPEG as
+`ErrUnsupported`.
+
+## Buffered-Image Output Passes
+
+`WithBufferedImage` mirrors libjpeg's `buffered_image` mode at the public
+facade level. After `StartDecompress`, call `StartOutput`, read scanlines, and
+then call `FinishOutput`. The decoder keeps a baseline image raster so callers
+can replay output passes or switch quantized colormaps between passes.
+
+```go
+dec := libjpeg.NewDecoder(r, libjpeg.WithBufferedImage())
+if _, err := dec.ReadHeader(); err != nil {
+	return err
+}
+if err := dec.StartDecompress(); err != nil {
+	return err
+}
+
+if ok, err := dec.StartOutput(dec.InputScanNumber()); err != nil || !ok {
+	return err
+}
+row := make([]byte, dec.OutputConfig().Stride)
+for dec.OutputScanline() < dec.OutputConfig().Height {
+	if _, err := dec.ReadScanlines([][]byte{row}); err != nil {
+		return err
+	}
+	// use row before the next ReadScanlines call
+}
+if ok, err := dec.FinishOutput(); err != nil || !ok {
+	return err
+}
+return dec.FinishDecompress()
+```
+
+This is currently a baseline JPEG replay path. Progressive input is still
+reported as `ErrUnsupported`, so progressive incremental display is not yet
+available.
+
+## Quantized Output
+
+`WithQuantizeColors` mirrors libjpeg's `quantize_colors` and
+`desired_number_of_colors` decompressor parameters. It returns
+`PixelFormatIndexed8` with a Go `color.Palette`.
+
+```go
+raster, err := libjpeg.DecodeRaster(
+	r,
+	libjpeg.WithQuantizeColors(64),
+	libjpeg.WithDitherMode(libjpeg.DitherFloydSteinberg),
+)
+if err != nil {
+	return err
+}
+
+_ = raster.Palette
+```
+
+For external colormap mode, pass a palette explicitly:
+
+```go
+raster, err := libjpeg.DecodeRaster(
+	r,
+	libjpeg.WithColormap(color.Palette{
+		color.RGBA{0, 0, 0, 255},
+		color.RGBA{255, 255, 255, 255},
+	}),
+	libjpeg.WithDitherMode(libjpeg.DitherNone),
+)
+```
+
+`Decoder.NewColormap` mirrors libjpeg's `jpeg_new_colormap()` for the buffered
+quantized raster path. It switches to a new external palette and resets
+`OutputScanline` to zero so the caller can emit another indexed pass.
+
+```go
+dec := libjpeg.NewDecoder(r, libjpeg.WithQuantizeColors(64))
+if _, err := dec.ReadHeader(); err != nil {
+	return err
+}
+if err := dec.StartDecompress(); err != nil {
+	return err
+}
+
+if err := dec.NewColormap(color.Palette{
+	color.RGBA{0, 0, 0, 255},
+	color.RGBA{255, 255, 255, 255},
+}); err != nil {
+	return err
+}
+```
+
+Quantized output currently supports grayscale and RGB output. CMYK/YCCK
+quantized output returns `ErrUnsupported`.
+
+## Coefficient Output
+
+`DecodeCoefficients` and `Decoder.ReadCoefficients` expose a baseline
+`jpeg_read_coefficients()` path. The returned blocks are quantized DCT
+coefficients in natural row-major order, before IDCT, color conversion, or
+upsampling.
+
+```go
+components, cfg, err := libjpeg.DecodeCoefficients(r)
+if err != nil {
+	return err
+}
+_ = cfg
+
+for _, component := range components {
+	for by := 0; by < component.HeightInBlocks; by++ {
+		row := component.Blocks[by*component.WidthInBlocks : (by+1)*component.WidthInBlocks]
+		useCoefficientBlocks(component.Component.Index, row)
+	}
+}
+```
+
+The scanline decoder form is:
+
+```go
+dec := libjpeg.NewDecoder(r)
+if _, err := dec.ReadHeader(); err != nil {
+	return err
+}
+components, err := dec.ReadCoefficients()
+if err != nil {
+	return err
+}
+_ = components
+```
+
+Progressive and arithmetic-coded coefficient decoding are still reported as
+`ErrUnsupported`.
+
+## Raw Component Output
+
+`DecodeRawComponents` and `Decoder.ReadRawData` expose libjpeg's
+`raw_data_out` / `jpeg_read_raw_data()` path. The returned components are
+downsampled planes before color conversion and upsampling.
+
+```go
+components, cfg, err := libjpeg.DecodeRawComponents(r)
+if err != nil {
+	return err
+}
+_ = cfg.RawDataOut
+
+for _, component := range components {
+	for y := 0; y < component.Height; y++ {
+		row := component.Pix[y*component.Stride : y*component.Stride+component.Width]
+		useRawComponentRow(component.Component.Index, row)
+	}
+}
+```
+
+The scanline form is:
+
+```go
+dec := libjpeg.NewDecoder(r, libjpeg.WithRawDataOutput())
+if _, err := dec.ReadHeader(); err != nil {
+	return err
+}
+if err := dec.StartDecompress(); err != nil {
+	return err
+}
+components, err := dec.ReadRawData()
+if err != nil {
+	return err
+}
+_ = components
+return dec.FinishDecompress()
+```
+
+Raw component output cannot be combined with quantized output. The facade's
+post-decode `WithScale` path is also disabled in raw mode.
 
 ## Compatibility Modes
 
@@ -399,6 +605,32 @@ for _, marker := range dec.Markers() {
 Only APP0 through APP15 and COM markers are accepted. APP0 and APP14 are still
 parsed internally for JFIF/Adobe behavior when saving is disabled.
 
+## Marker Processors
+
+`WithMarkerProcessor` and `Decoder.SetMarkerProcessor` mirror libjpeg's
+`jpeg_set_marker_processor()` lifecycle for APPn and COM markers. Configure the
+processor before `ReadHeader`; the callback receives a copy of the marker
+payload and may return an error to stop header parsing.
+
+```go
+dec := libjpeg.NewDecoder(
+	r,
+	libjpeg.WithMarkerProcessor(libjpeg.MarkerAPP2, func(marker libjpeg.Marker) error {
+		_ = marker.Code
+		_ = marker.OriginalLength
+		_ = marker.Data
+		return nil
+	}),
+)
+
+if _, err := dec.ReadHeader(); err != nil {
+	return err
+}
+```
+
+If a marker processor and saved-marker retention are both configured for the
+same marker code, the processor takes precedence.
+
 ## Tables
 
 After `ReadHeader`, callers can inspect parsed DQT and DHT tables through
@@ -422,6 +654,15 @@ if ok {
 	_ = dc.Bits
 	_ = dc.Values
 }
+
+for _, component := range dec.Components() {
+	_ = component.ID
+	_ = component.HSampFactor
+	_ = component.VSampFactor
+	_ = component.QuantizationTableIndex
+}
+
+_ = dec.RestartInterval()
 ```
 
 ## Options Struct
@@ -438,6 +679,12 @@ opts := &libjpeg.Options{
 	OutputColorSpace:  libjpeg.ColorSpaceUnknown,
 	ColorTransform:    libjpeg.ColorTransformDefault,
 	ChromaIDCTScaling: libjpeg.ChromaIDCTScalingDefault,
+	QuantizeColors:    true,
+	DesiredNumColors:  64,
+	DitherMode:        libjpeg.DitherFloydSteinberg,
+	RawDataOut:        false,
+	OutputGamma:       1.0,
+	BlockSmoothing:    libjpeg.BlockSmoothingDefault,
 }
 
 raster, err := libjpeg.DecodeRasterWithOptions(r, opts)
@@ -448,6 +695,7 @@ CLI-style strings can be parsed with:
 ```go
 idct, err := libjpeg.ParseIDCTMethod("int")
 space, err := libjpeg.ParseInputColorSpace("rgb")
+dither, err := libjpeg.ParseDitherMode("fs")
 ```
 
 ## Scanline API
@@ -467,9 +715,29 @@ if err != nil {
 }
 fmt.Println(header.Width, header.Height)
 
+// Equivalent low-level form when the caller needs the libjpeg return code:
+header, status, err := dec.ReadHeaderRequireImage(true)
+if err != nil {
+	return err
+}
+_ = status
+
+dimensions, err := dec.CalcOutputDimensions()
+if err != nil {
+	return err
+}
+_ = dimensions.RecOutbufHeight
+
 if err := dec.Start(); err != nil {
 	return err
 }
+
+xOffset, width, err := dec.CropScanline(0, header.Width)
+if err != nil {
+	return err
+}
+_ = xOffset
+_ = width
 
 out := dec.OutputConfig()
 row := make([]byte, out.Stride)
@@ -492,9 +760,31 @@ if err := dec.Finish(); err != nil {
 }
 ```
 
+Advanced callers can drive marker input explicitly with `ConsumeInput`, which
+mirrors libjpeg's `jpeg_consume_input()` return codes.
+
+```go
+status, err := dec.ConsumeInput()
+if err != nil {
+	return err
+}
+if status == libjpeg.InputReachedSOS {
+	_ = dec.Header()
+}
+```
+
+`CalcOutputDimensions` mirrors libjpeg's `jpeg_calc_output_dimensions()`.
+Call it after `ReadHeader` if you need the final output geometry before
+starting decompression.
+
 `SkipScanlines` mirrors libjpeg's `jpeg_skip_scanlines()`: it advances the
 output scanline cursor, stops at the bottom of the image, and returns the
 number of rows actually skipped.
+
+`CropScanline` mirrors libjpeg's `jpeg_crop_scanline()` at the facade level.
+Call it after `Start` and before reading or skipping any rows. The returned
+offset and width are the actual crop region; width is clamped to the right edge
+of the output image.
 
 Read all expected output rows before calling `Finish`. Stopping early can
 surface a "too little data" decompressor error because the decoder expects the
@@ -553,6 +843,8 @@ coding.
 | `--rgb` | `libjpeg.WithRGBOutput()` |
 | `--maxmemory 20m` | `limit, _ := libjpeg.ParseMemoryLimit("20m"); libjpeg.WithMaxMemory(limit)` |
 | `--scale 1/2` | `libjpeg.WithScale(1, 2)` |
+| `--colors 64` | `libjpeg.WithQuantizeColors(64)` |
+| `--dither fs` | `libjpeg.WithDitherMode(libjpeg.DitherFloydSteinberg)` |
 | `--compatibility poppler-pdf` | `libjpeg.WithCompatibility(libjpeg.CompatibilityPopplerPDF)` |
 | `--turbo-fancy` | `libjpeg.WithTurboFancy()` deprecated alias |
 | `--input-colorspace rgb` | `libjpeg.WithInputColorSpace(libjpeg.InputRGB)` |

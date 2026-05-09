@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
+	"image/color"
 	"image/png"
 	"os"
 	"testing"
@@ -560,6 +561,575 @@ func TestDecoderSavedMarkers(t *testing.T) {
 	}
 }
 
+func TestDecoderMarkerProcessorOption(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+	payload := []byte("processor-payload")
+	data = insertHeaderMarker(data, djpeg.MarkerAPP2, payload)
+
+	var got []djpeg.Marker
+	dec := djpeg.NewDecoder(
+		bytes.NewReader(data),
+		djpeg.WithSavedMarkers(djpeg.MarkerAPP2, 65533),
+		djpeg.WithMarkerProcessor(djpeg.MarkerAPP2, func(marker djpeg.Marker) error {
+			got = append(got, djpeg.Marker{
+				Code:           marker.Code,
+				OriginalLength: marker.OriginalLength,
+				Data:           append([]byte(nil), marker.Data...),
+			})
+			marker.Data[0] = 0
+			return nil
+		}),
+	)
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("marker processor calls = %d, want 1", len(got))
+	}
+	if got[0].Code != djpeg.MarkerAPP2 || got[0].OriginalLength != uint(len(payload)) ||
+		!bytes.Equal(got[0].Data, payload) {
+		t.Fatalf("processed marker = %+v data %q, want APP2 payload %q", got[0], got[0].Data, payload)
+	}
+	if len(dec.Markers()) != 0 {
+		t.Fatal("WithMarkerProcessor should override WithSavedMarkers for the same marker")
+	}
+}
+
+func TestDecoderMarkerProcessorError(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+	sentinel := errors.New("marker rejected")
+	dec := djpeg.NewDecoder(
+		bytes.NewReader(insertHeaderMarker(data, djpeg.MarkerAPP3, []byte("reject"))),
+		djpeg.WithMarkerProcessor(djpeg.MarkerAPP3, func(marker djpeg.Marker) error {
+			return sentinel
+		}),
+	)
+	if _, err := dec.ReadHeader(); !errors.Is(err, sentinel) {
+		t.Fatalf("ReadHeader marker processor error = %v, want sentinel", err)
+	}
+}
+
+func TestDecodeRasterQuantizedOutput(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/color_8x8_444.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	cfg, err := djpeg.DecodeRasterConfig(
+		bytes.NewReader(data),
+		djpeg.WithQuantizeColors(8),
+		djpeg.WithDitherMode(djpeg.DitherNone),
+	)
+	if err != nil {
+		t.Fatalf("DecodeRasterConfig quantized failed: %v", err)
+	}
+	if !cfg.Quantized || cfg.PixelFormat != djpeg.PixelFormatIndexed8 || cfg.Components != 1 || cfg.Stride != cfg.Width {
+		t.Fatalf("quantized config = %+v, want indexed8 one-component output", cfg)
+	}
+	if cfg.DesiredNumColors != 8 {
+		t.Fatalf("DesiredNumColors = %d, want 8", cfg.DesiredNumColors)
+	}
+
+	raster, err := djpeg.DecodeRaster(
+		bytes.NewReader(data),
+		djpeg.WithQuantizeColors(8),
+		djpeg.WithDitherMode(djpeg.DitherNone),
+	)
+	if err != nil {
+		t.Fatalf("DecodeRaster quantized failed: %v", err)
+	}
+	if raster.Format != djpeg.PixelFormatIndexed8 || raster.Stride != raster.Rect.Dx() {
+		t.Fatalf("quantized raster format=%s stride=%d width=%d", raster.Format, raster.Stride, raster.Rect.Dx())
+	}
+	if len(raster.Palette) == 0 || len(raster.Palette) > 8 {
+		t.Fatalf("palette length = %d, want 1..8", len(raster.Palette))
+	}
+	for i, idx := range raster.Pix {
+		if int(idx) >= len(raster.Palette) {
+			t.Fatalf("pixel %d index=%d outside palette length %d", i, idx, len(raster.Palette))
+		}
+	}
+}
+
+func TestDecoderQuantizedScanlines(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/color_8x8_444.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data), djpeg.WithQuantizeColors(4))
+	cfg, err := dec.ReadHeader()
+	if err != nil {
+		t.Fatalf("ReadHeader quantized failed: %v", err)
+	}
+	if cfg.PixelFormat != djpeg.PixelFormatIndexed8 || cfg.Stride != cfg.Width {
+		t.Fatalf("ReadHeader quantized config = %+v, want indexed8 stride width", cfg)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress quantized failed: %v", err)
+	}
+	if len(dec.Palette()) == 0 || dec.OutputConfig().ActualNumColors != len(dec.Palette()) {
+		t.Fatalf("palette length=%d output actual colors=%d", len(dec.Palette()), dec.OutputConfig().ActualNumColors)
+	}
+	row := make([]byte, dec.OutputConfig().Stride)
+	n, err := dec.ReadScanlines([][]byte{row})
+	if err != nil {
+		t.Fatalf("ReadScanlines quantized failed: %v", err)
+	}
+	if n != 1 || dec.OutputScanline() != 1 {
+		t.Fatalf("quantized read rows=%d output_scanline=%d, want 1", n, dec.OutputScanline())
+	}
+	if skipped, err := dec.SkipScanlines(100); err != nil || skipped != dec.OutputConfig().Height-1 {
+		t.Fatalf("SkipScanlines quantized skipped=%d err=%v, want %d nil", skipped, err, dec.OutputConfig().Height-1)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress quantized failed: %v", err)
+	}
+}
+
+func TestDecodeRasterExternalColormap(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+	palette := color.Palette{color.Gray{Y: 0}, color.Gray{Y: 255}}
+	raster, err := djpeg.DecodeRaster(
+		bytes.NewReader(data),
+		djpeg.WithColormap(palette),
+		djpeg.WithDitherMode(djpeg.DitherNone),
+	)
+	if err != nil {
+		t.Fatalf("DecodeRaster external colormap failed: %v", err)
+	}
+	if raster.Format != djpeg.PixelFormatIndexed8 || len(raster.Palette) != len(palette) {
+		t.Fatalf("external colormap raster format=%s palette=%d, want indexed8/%d",
+			raster.Format, len(raster.Palette), len(palette))
+	}
+	for i, idx := range raster.Pix {
+		if idx > 1 {
+			t.Fatalf("pixel %d index=%d outside external colormap", i, idx)
+		}
+	}
+}
+
+func TestDecoderNewColormap(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/color_8x8_444.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(
+		bytes.NewReader(data),
+		djpeg.WithQuantizeColors(8),
+		djpeg.WithDitherMode(djpeg.DitherNone),
+	)
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress failed: %v", err)
+	}
+	if len(dec.Palette()) == 0 {
+		t.Fatal("initial quantized palette is empty")
+	}
+	row := make([]byte, dec.OutputConfig().Stride)
+	if n, err := dec.ReadScanlines([][]byte{row}); err != nil || n != 1 {
+		t.Fatalf("initial ReadScanlines rows=%d err=%v, want 1 nil", n, err)
+	}
+	if dec.OutputScanline() != 1 {
+		t.Fatalf("OutputScanline before NewColormap = %d, want 1", dec.OutputScanline())
+	}
+
+	newPalette := color.Palette{color.Black, color.White}
+	if err := dec.NewColormap(newPalette); err != nil {
+		t.Fatalf("NewColormap failed: %v", err)
+	}
+	if dec.OutputScanline() != 0 {
+		t.Fatalf("OutputScanline after NewColormap = %d, want 0", dec.OutputScanline())
+	}
+	if len(dec.Palette()) != len(newPalette) || dec.OutputConfig().ActualNumColors != len(newPalette) {
+		t.Fatalf("palette length=%d actual=%d, want %d",
+			len(dec.Palette()), dec.OutputConfig().ActualNumColors, len(newPalette))
+	}
+	row = make([]byte, dec.OutputConfig().Stride)
+	if n, err := dec.ReadScanlines([][]byte{row}); err != nil || n != 1 {
+		t.Fatalf("ReadScanlines after NewColormap rows=%d err=%v, want 1 nil", n, err)
+	}
+	for i, idx := range row {
+		if idx >= byte(len(newPalette)) {
+			t.Fatalf("row pixel %d index=%d outside new palette length %d", i, idx, len(newPalette))
+		}
+	}
+	if _, err := dec.SkipScanlines(100); err != nil {
+		t.Fatalf("SkipScanlines after NewColormap failed: %v", err)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress failed: %v", err)
+	}
+}
+
+func TestDecoderNewColormapInvalid(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data), djpeg.WithQuantizeColors(8))
+	if err := dec.NewColormap(color.Palette{color.Black, color.White}); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("NewColormap before Start error = %v, want ErrInvalidOption", err)
+	}
+
+	dec = djpeg.NewDecoder(bytes.NewReader(data))
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress failed: %v", err)
+	}
+	if err := dec.NewColormap(color.Palette{color.Black, color.White}); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("NewColormap non-quantized error = %v, want ErrInvalidOption", err)
+	}
+	dec.Abort()
+
+	dec = djpeg.NewDecoder(bytes.NewReader(data), djpeg.WithQuantizeColors(8))
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader quantized failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress quantized failed: %v", err)
+	}
+	if err := dec.NewColormap(color.Palette{}); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("NewColormap empty palette error = %v, want ErrInvalidOption", err)
+	}
+	if err := dec.NewColormap(color.Palette{color.Black}); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("NewColormap single-entry palette error = %v, want ErrInvalidOption", err)
+	}
+}
+
+func TestDecoderBufferedImageOutputPasses(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+	reference, err := djpeg.DecodeRaster(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeRaster reference failed: %v", err)
+	}
+	bufferedRaster, err := djpeg.DecodeRaster(bytes.NewReader(data), djpeg.WithBufferedImage())
+	if err != nil {
+		t.Fatalf("DecodeRaster WithBufferedImage failed: %v", err)
+	}
+	if !bytes.Equal(bufferedRaster.Pix, reference.Pix) {
+		t.Fatal("DecodeRaster WithBufferedImage differs from direct DecodeRaster output")
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data), djpeg.WithBufferedImage())
+	cfg, err := dec.ReadHeader()
+	if err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	if !cfg.BufferedImage {
+		t.Fatalf("ReadHeader BufferedImage = false")
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress failed: %v", err)
+	}
+	if !dec.OutputConfig().BufferedImage || !dec.OutputConfig().InputComplete {
+		t.Fatalf("output config buffered/input_complete = %v/%v, want true/true",
+			dec.OutputConfig().BufferedImage, dec.OutputConfig().InputComplete)
+	}
+	if _, err := dec.ReadScanlines([][]byte{make([]byte, dec.OutputConfig().Stride)}); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("ReadScanlines before StartOutput error = %v, want ErrInvalidOption", err)
+	}
+
+	ok, err := dec.StartOutput(0)
+	if err != nil || !ok {
+		t.Fatalf("StartOutput(0) ok=%v err=%v, want true nil", ok, err)
+	}
+	if dec.OutputScanNumber() != 1 || dec.OutputScanline() != 0 {
+		t.Fatalf("output scan number/line = %d/%d, want 1/0", dec.OutputScanNumber(), dec.OutputScanline())
+	}
+	got := djpeg.NewRaster(dec.OutputConfig().Width, dec.OutputConfig().Height, dec.OutputConfig().PixelFormat)
+	for y := 0; y < dec.OutputConfig().Height; y++ {
+		row := got.Pix[y*got.Stride : y*got.Stride+got.Stride]
+		n, err := dec.ReadScanlines([][]byte{row})
+		if err != nil || n != 1 {
+			t.Fatalf("ReadScanlines pass1 row %d rows=%d err=%v, want 1 nil", y, n, err)
+		}
+	}
+	if !bytes.Equal(got.Pix, reference.Pix) {
+		t.Fatal("buffered output pass pixels differ from direct DecodeRaster output")
+	}
+	ok, err = dec.FinishOutput()
+	if err != nil || !ok {
+		t.Fatalf("FinishOutput pass1 ok=%v err=%v, want true nil", ok, err)
+	}
+
+	ok, err = dec.StartOutput(99)
+	if err != nil || !ok {
+		t.Fatalf("StartOutput(99) ok=%v err=%v, want true nil", ok, err)
+	}
+	if dec.OutputScanNumber() != dec.InputScanNumber() {
+		t.Fatalf("OutputScanNumber = %d, want clamped input scan %d",
+			dec.OutputScanNumber(), dec.InputScanNumber())
+	}
+	row := make([]byte, dec.OutputConfig().Stride)
+	if n, err := dec.ReadScanlines([][]byte{row}); err != nil || n != 1 {
+		t.Fatalf("ReadScanlines pass2 first row rows=%d err=%v, want 1 nil", n, err)
+	}
+	if !bytes.Equal(row, reference.Pix[:reference.Stride]) {
+		t.Fatal("buffered second pass first row differs from reference")
+	}
+	if ok, err := dec.FinishOutput(); err != nil || !ok {
+		t.Fatalf("FinishOutput pass2 ok=%v err=%v, want true nil", ok, err)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress failed: %v", err)
+	}
+}
+
+func TestDecoderBufferedImageInvalidLifecycle(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	if ok, err := dec.StartOutput(1); !errors.Is(err, djpeg.ErrInvalidOption) || ok {
+		t.Fatalf("StartOutput without buffered mode ok=%v err=%v, want false ErrInvalidOption", ok, err)
+	}
+
+	dec = djpeg.NewDecoder(bytes.NewReader(data), djpeg.WithBufferedImage(), djpeg.WithQuantizeColors(4))
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader buffered quantized failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress buffered quantized failed: %v", err)
+	}
+	if ok, err := dec.StartOutput(1); err != nil || !ok {
+		t.Fatalf("StartOutput buffered quantized ok=%v err=%v, want true nil", ok, err)
+	}
+	if err := dec.NewColormap(color.Palette{color.Black, color.White}); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("NewColormap during output pass error = %v, want ErrInvalidOption", err)
+	}
+	if err := dec.FinishDecompress(); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("FinishDecompress during output pass error = %v, want ErrInvalidOption", err)
+	}
+	if ok, err := dec.FinishOutput(); err != nil || !ok {
+		t.Fatalf("FinishOutput ok=%v err=%v, want true nil", ok, err)
+	}
+	if err := dec.NewColormap(color.Palette{color.Black, color.White}); err != nil {
+		t.Fatalf("NewColormap between output passes failed: %v", err)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress after FinishOutput failed: %v", err)
+	}
+}
+
+func TestDecodeRasterQuantizedInvalidOptions(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+	if _, err := djpeg.DecodeRasterConfig(bytes.NewReader(data), djpeg.WithQuantizeColors(1)); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("DecodeRasterConfig WithQuantizeColors(1) error = %v, want ErrInvalidOption", err)
+	}
+
+	cmykData, err := base64.StdEncoding.DecodeString(tinyCMYKJPEGBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = djpeg.DecodeRasterConfig(
+		bytes.NewReader(cmykData),
+		djpeg.WithOutputColorSpace(djpeg.ColorSpaceCMYK),
+		djpeg.WithQuantizeColors(8),
+	)
+	if !errors.Is(err, djpeg.ErrUnsupported) {
+		t.Fatalf("DecodeRasterConfig CMYK quantized error = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestDecodeRawComponents(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/color_16x16_420.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	components, cfg, err := djpeg.DecodeRawComponents(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeRawComponents failed: %v", err)
+	}
+	if !cfg.RawDataOut {
+		t.Fatalf("RawDataOut = false in config %+v", cfg)
+	}
+	if len(components) != 3 {
+		t.Fatalf("raw component count = %d, want 3", len(components))
+	}
+	for i, comp := range components {
+		if comp.Width <= 0 || comp.Height <= 0 || comp.Stride < comp.Width {
+			t.Fatalf("component %d dimensions width=%d height=%d stride=%d", i, comp.Width, comp.Height, comp.Stride)
+		}
+		if len(comp.Pix) != comp.Height*comp.Stride {
+			t.Fatalf("component %d pix len=%d, want %d", i, len(comp.Pix), comp.Height*comp.Stride)
+		}
+		if comp.Component.Index != i {
+			t.Fatalf("component %d metadata index = %d", i, comp.Component.Index)
+		}
+	}
+	if components[0].Width < components[1].Width || components[0].Height < components[1].Height {
+		t.Fatalf("Y component %dx%d should be at least chroma %dx%d",
+			components[0].Width, components[0].Height, components[1].Width, components[1].Height)
+	}
+}
+
+func TestDecoderRawDataLifecycle(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/color_8x8_444.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data), djpeg.WithRawDataOutput())
+	cfg, err := dec.ReadHeader()
+	if err != nil {
+		t.Fatalf("ReadHeader raw failed: %v", err)
+	}
+	if !cfg.RawDataOut {
+		t.Fatalf("ReadHeader RawDataOut = false")
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress raw failed: %v", err)
+	}
+	if _, err := dec.ReadScanlines([][]byte{make([]byte, dec.OutputConfig().Stride)}); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("ReadScanlines in raw mode error = %v, want ErrInvalidOption", err)
+	}
+	components, err := dec.ReadRawData()
+	if err != nil {
+		t.Fatalf("ReadRawData failed: %v", err)
+	}
+	if len(components) != 3 {
+		t.Fatalf("ReadRawData components = %d, want 3", len(components))
+	}
+	if dec.OutputScanline() != dec.OutputConfig().Height {
+		t.Fatalf("OutputScanline after ReadRawData = %d, want %d", dec.OutputScanline(), dec.OutputConfig().Height)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress raw failed: %v", err)
+	}
+}
+
+func TestDecodeRawComponentsInvalidOptions(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+	if _, err := djpeg.DecodeRaster(bytes.NewReader(data), djpeg.WithRawDataOutput()); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("DecodeRaster raw mode error = %v, want ErrInvalidOption", err)
+	}
+	if _, _, err := djpeg.DecodeRawComponents(bytes.NewReader(data), djpeg.WithQuantizeColors(8)); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("DecodeRawComponents quantized error = %v, want ErrInvalidOption", err)
+	}
+	if _, _, err := djpeg.DecodeRawComponents(bytes.NewReader(data), djpeg.WithScale(1, 2)); !errors.Is(err, djpeg.ErrUnsupported) {
+		t.Fatalf("DecodeRawComponents scaled error = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestDecodeCoefficients(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	components, cfg, err := djpeg.DecodeCoefficients(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeCoefficients failed: %v", err)
+	}
+	if cfg.Width != 8 || cfg.Height != 8 || cfg.InputComponents != 1 {
+		t.Fatalf("coefficient config = %+v, want 8x8 one-component", cfg)
+	}
+	if len(components) != 1 {
+		t.Fatalf("coefficient components = %d, want 1", len(components))
+	}
+	comp := components[0]
+	if comp.WidthInBlocks != 1 || comp.HeightInBlocks != 1 || len(comp.Blocks) != 1 {
+		t.Fatalf("coefficient block layout = %dx%d len=%d, want 1x1 len=1",
+			comp.WidthInBlocks, comp.HeightInBlocks, len(comp.Blocks))
+	}
+	for i, coef := range comp.Blocks[0] {
+		if coef != 0 {
+			t.Fatalf("gray_8x8 coefficient %d = %d, want 0", i, coef)
+		}
+	}
+}
+
+func TestDecoderReadCoefficientsLifecycle(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/color_8x8_444.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	components, err := dec.ReadCoefficients()
+	if err != nil {
+		t.Fatalf("ReadCoefficients failed: %v", err)
+	}
+	if !dec.InputComplete() {
+		t.Fatal("InputComplete should be true after ReadCoefficients")
+	}
+	if len(components) != 3 {
+		t.Fatalf("coefficient components = %d, want 3", len(components))
+	}
+	for i, comp := range components {
+		if comp.Component.Index != i || comp.WidthInBlocks != 1 || comp.HeightInBlocks != 1 || len(comp.Blocks) != 1 {
+			t.Fatalf("component %d layout = index %d %dx%d len=%d, want index %d 1x1 len=1",
+				i, comp.Component.Index, comp.WidthInBlocks, comp.HeightInBlocks, len(comp.Blocks), i)
+		}
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress after ReadCoefficients failed: %v", err)
+	}
+}
+
+func TestDecodeCoefficientsInvalidOptions(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	if _, _, err := djpeg.DecodeCoefficients(bytes.NewReader(data), djpeg.WithRawDataOutput()); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("DecodeCoefficients raw data error = %v, want ErrInvalidOption", err)
+	}
+	if _, _, err := djpeg.DecodeCoefficients(bytes.NewReader(data), djpeg.WithQuantizeColors(8)); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("DecodeCoefficients quantized error = %v, want ErrInvalidOption", err)
+	}
+	if _, _, err := djpeg.DecodeCoefficients(bytes.NewReader(data), djpeg.WithScale(1, 2)); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("DecodeCoefficients scaled error = %v, want ErrInvalidOption", err)
+	}
+}
+
+func TestDecoderReadCoefficientsProgressiveUnsupported(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/test_progressive.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	if _, status, err := dec.ReadHeaderRequireImage(true); err != nil || status != djpeg.HeaderOK {
+		t.Fatalf("ReadHeaderRequireImage progressive status=%v err=%v, want ok nil", status, err)
+	}
+	if _, err := dec.ReadCoefficients(); !errors.Is(err, djpeg.ErrUnsupported) {
+		t.Fatalf("ReadCoefficients progressive error = %v, want ErrUnsupported", err)
+	}
+}
+
 func TestDecoderTables(t *testing.T) {
 	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
 	if err != nil {
@@ -605,6 +1175,258 @@ func TestDecoderTables(t *testing.T) {
 	}
 }
 
+func TestDecoderComponents(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	if got := dec.Components(); len(got) != 0 {
+		t.Fatalf("Components before ReadHeader length = %d, want 0", len(got))
+	}
+	if dec.RestartInterval() != 0 {
+		t.Fatalf("RestartInterval before ReadHeader = %d, want 0", dec.RestartInterval())
+	}
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+
+	components := dec.Components()
+	if len(components) != 1 {
+		t.Fatalf("Components length = %d, want 1", len(components))
+	}
+	comp := components[0]
+	if comp.ID != 1 || comp.Index != 0 || comp.HSampFactor != 1 || comp.VSampFactor != 1 {
+		t.Fatalf("component identity/sampling = %+v, want id=1 index=0 h=1 v=1", comp)
+	}
+	if comp.QuantizationTableIndex != 0 || comp.DCHuffmanTableIndex != 0 || comp.ACHuffmanTableIndex != 0 {
+		t.Fatalf("component table indexes = q:%d dc:%d ac:%d, want 0/0/0",
+			comp.QuantizationTableIndex, comp.DCHuffmanTableIndex, comp.ACHuffmanTableIndex)
+	}
+	components[0].ID = 99
+	if again := dec.Components(); again[0].ID != 1 {
+		t.Fatalf("Components returned mutable decoder-owned data: id=%d, want 1", again[0].ID)
+	}
+	if dec.RestartInterval() != 0 {
+		t.Fatalf("RestartInterval = %d, want 0 for fixture without DRI", dec.RestartInterval())
+	}
+}
+
+func TestDecoderCalcOutputDimensions(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data), djpeg.WithScale(1, 2), djpeg.WithRGBOutput())
+	cfg, err := dec.CalcOutputDimensions()
+	if err != nil {
+		t.Fatalf("CalcOutputDimensions failed: %v", err)
+	}
+	if cfg.Width != 4 || cfg.Height != 4 || cfg.PixelFormat != djpeg.PixelFormatRGB24 || cfg.Stride != 12 {
+		t.Fatalf("CalcOutputDimensions config = %+v, want 4x4 rgb24 stride 12", cfg)
+	}
+	if cfg.ImageWidth != 8 || cfg.ImageHeight != 8 || cfg.DataPrecision != 8 {
+		t.Fatalf("CalcOutputDimensions header fields = image %dx%d precision %d, want 8x8 precision 8",
+			cfg.ImageWidth, cfg.ImageHeight, cfg.DataPrecision)
+	}
+	if cfg.MaxHSampFactor != 1 || cfg.MaxVSampFactor != 1 || cfg.MinDCTHScaledSize != 8 || cfg.MinDCTVScaledSize != 8 {
+		t.Fatalf("CalcOutputDimensions sampling fields = max %dx%d minDCT %dx%d, want 1x1 and 8x8",
+			cfg.MaxHSampFactor, cfg.MaxVSampFactor, cfg.MinDCTHScaledSize, cfg.MinDCTVScaledSize)
+	}
+	if cfg.BlockSize != 8 || cfg.ScaleNum != 8 || cfg.ScaleDenom != 8 {
+		t.Fatalf("CalcOutputDimensions block/scale = block %d scale %d/%d, want 8 and marker scale 8/8",
+			cfg.BlockSize, cfg.ScaleNum, cfg.ScaleDenom)
+	}
+	if cfg.RecOutbufHeight != 1 {
+		t.Fatalf("RecOutbufHeight = %d, want 1", cfg.RecOutbufHeight)
+	}
+	if _, _, err := dec.CropScanline(0, 1); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("CropScanline after CalcOutputDimensions before Start error = %v, want ErrInvalidOption", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress failed: %v", err)
+	}
+	out := dec.OutputConfig()
+	if out.Width != cfg.Width || out.Height != cfg.Height || out.Stride != cfg.Stride || out.RecOutbufHeight != cfg.RecOutbufHeight {
+		t.Fatalf("OutputConfig after Start = %+v, want dimensions from CalcOutputDimensions %+v", out, cfg)
+	}
+	row := make([]byte, out.Stride)
+	rows := 0
+	for dec.OutputScanline() < out.Height {
+		n, err := dec.ReadScanlines([][]byte{row})
+		if err != nil {
+			t.Fatalf("ReadScanlines failed: %v", err)
+		}
+		if n == 0 {
+			break
+		}
+		rows += n
+	}
+	if rows != out.Height {
+		t.Fatalf("rows read = %d, want %d", rows, out.Height)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress failed: %v", err)
+	}
+}
+
+func TestDecoderConsumeInput(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	status, err := dec.ConsumeInput()
+	if err != nil {
+		t.Fatalf("ConsumeInput failed: %v", err)
+	}
+	if status != djpeg.InputReachedSOS || status.String() != "reached-sos" {
+		t.Fatalf("ConsumeInput status = %v (%s), want reached SOS", status, status.String())
+	}
+	cfg := dec.Header()
+	if cfg.Width != 8 || cfg.Height != 8 || cfg.PixelFormat != djpeg.PixelFormatGray8 {
+		t.Fatalf("Header after ConsumeInput = %+v, want 8x8 gray", cfg)
+	}
+	if status, err = dec.ConsumeInput(); err != nil || status != djpeg.InputReachedSOS {
+		t.Fatalf("second ConsumeInput status=%v err=%v, want reached SOS nil", status, err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress after ConsumeInput failed: %v", err)
+	}
+	row := make([]byte, dec.OutputConfig().Stride)
+	rows := 0
+	for dec.OutputScanline() < dec.OutputConfig().Height {
+		n, err := dec.ReadScanlines([][]byte{row})
+		if err != nil {
+			t.Fatalf("ReadScanlines failed: %v", err)
+		}
+		if n == 0 {
+			break
+		}
+		rows += n
+	}
+	if rows != cfg.Height {
+		t.Fatalf("rows read = %d, want %d", rows, cfg.Height)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress failed: %v", err)
+	}
+}
+
+func TestDecoderConsumeInputTablesOnly(t *testing.T) {
+	dec := djpeg.NewDecoder(bytes.NewReader([]byte{0xff, 0xd8, 0xff, 0xd9}))
+	status, err := dec.ConsumeInput()
+	if err != nil {
+		t.Fatalf("ConsumeInput tables-only failed: %v", err)
+	}
+	if status != djpeg.InputReachedEOI || status.String() != "reached-eoi" {
+		t.Fatalf("ConsumeInput tables-only status = %v (%s), want reached EOI", status, status.String())
+	}
+	if !dec.InputComplete() {
+		t.Fatal("InputComplete should be true after tables-only EOI")
+	}
+	if dec.Header() != (djpeg.Config{}) {
+		t.Fatalf("Header after tables-only ConsumeInput = %+v, want empty", dec.Header())
+	}
+}
+
+func TestDecoderConsumeInputProgressiveStillRejectedAtStart(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/test_progressive.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	status, err := dec.ConsumeInput()
+	if err != nil {
+		t.Fatalf("ConsumeInput progressive failed: %v", err)
+	}
+	if status != djpeg.InputReachedSOS {
+		t.Fatalf("ConsumeInput progressive status = %v, want reached SOS", status)
+	}
+	if !dec.IsProgressive() {
+		t.Fatal("ConsumeInput should expose progressive header state")
+	}
+	if err := dec.StartDecompress(); !errors.Is(err, djpeg.ErrUnsupported) {
+		t.Fatalf("StartDecompress progressive error = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestDecoderReadHeaderRequireImage(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	cfg, status, err := dec.ReadHeaderRequireImage(true)
+	if err != nil {
+		t.Fatalf("ReadHeaderRequireImage failed: %v", err)
+	}
+	if status != djpeg.HeaderOK || status.String() != "ok" {
+		t.Fatalf("ReadHeaderRequireImage status = %v (%s), want ok", status, status.String())
+	}
+	if cfg.Width != 8 || cfg.Height != 8 || cfg.PixelFormat != djpeg.PixelFormatGray8 {
+		t.Fatalf("ReadHeaderRequireImage config = %+v, want 8x8 gray", cfg)
+	}
+	if dec.Header() != cfg {
+		t.Fatalf("Header() = %+v, want %+v", dec.Header(), cfg)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress after ReadHeaderRequireImage failed: %v", err)
+	}
+	if skipped, err := dec.SkipScanlines(100); err != nil || skipped != cfg.Height {
+		t.Fatalf("SkipScanlines after ReadHeaderRequireImage skipped=%d err=%v, want %d nil", skipped, err, cfg.Height)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress failed: %v", err)
+	}
+}
+
+func TestDecoderReadHeaderRequireImageTablesOnly(t *testing.T) {
+	data := []byte{0xff, 0xd8, 0xff, 0xd9}
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	cfg, status, err := dec.ReadHeaderRequireImage(false)
+	if err != nil {
+		t.Fatalf("ReadHeaderRequireImage(false) tables-only failed: %v", err)
+	}
+	if status != djpeg.HeaderTablesOnly || status.String() != "tables-only" {
+		t.Fatalf("ReadHeaderRequireImage(false) status = %v (%s), want tables-only", status, status.String())
+	}
+	if cfg != (djpeg.Config{}) || dec.Header() != (djpeg.Config{}) {
+		t.Fatalf("tables-only config=%+v header=%+v, want empty", cfg, dec.Header())
+	}
+
+	dec = djpeg.NewDecoder(bytes.NewReader(data))
+	_, status, err = dec.ReadHeaderRequireImage(true)
+	if !errors.Is(err, djpeg.ErrInvalidJPEG) || status != djpeg.HeaderSuspended {
+		t.Fatalf("ReadHeaderRequireImage(true) tables-only status=%v err=%v, want suspended ErrInvalidJPEG", status, err)
+	}
+}
+
+func TestDecoderReadHeaderRequireImageProgressive(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/test_progressive.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	cfg, status, err := dec.ReadHeaderRequireImage(true)
+	if err != nil {
+		t.Fatalf("ReadHeaderRequireImage progressive failed: %v", err)
+	}
+	if status != djpeg.HeaderOK || !cfg.Progressive || !dec.IsProgressive() {
+		t.Fatalf("progressive header status=%v cfg.Progressive=%v dec.IsProgressive=%v, want ok/progressive",
+			status, cfg.Progressive, dec.IsProgressive())
+	}
+	if err := dec.StartDecompress(); !errors.Is(err, djpeg.ErrUnsupported) {
+		t.Fatalf("StartDecompress progressive error = %v, want ErrUnsupported", err)
+	}
+}
+
 func TestDecodeRasterConfigExposesHeaderMetadata(t *testing.T) {
 	data, err := base64.StdEncoding.DecodeString(tinyCMYKJPEGBase64)
 	if err != nil {
@@ -630,6 +1452,66 @@ func TestDecodeRasterConfigExposesHeaderMetadata(t *testing.T) {
 	if !cfg.SawAdobeMarker || cfg.AdobeTransform != 2 {
 		t.Fatalf("Adobe metadata saw=%v transform=%d, want transform 2",
 			cfg.SawAdobeMarker, cfg.AdobeTransform)
+	}
+}
+
+func TestDecodeRasterConfigExposesDecompressParameters(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	cfg, err := djpeg.DecodeRasterConfig(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeRasterConfig failed: %v", err)
+	}
+	if cfg.OutputGamma != 1.0 || !cfg.DoBlockSmoothing {
+		t.Fatalf("default params gamma=%v block_smoothing=%v, want 1.0/true",
+			cfg.OutputGamma, cfg.DoBlockSmoothing)
+	}
+
+	cfg, err = djpeg.DecodeRasterConfig(
+		bytes.NewReader(data),
+		djpeg.WithOutputGamma(2.2),
+		djpeg.WithBlockSmoothing(false),
+	)
+	if err != nil {
+		t.Fatalf("DecodeRasterConfig parameter overrides failed: %v", err)
+	}
+	if cfg.OutputGamma != 2.2 || cfg.DoBlockSmoothing {
+		t.Fatalf("overridden params gamma=%v block_smoothing=%v, want 2.2/false",
+			cfg.OutputGamma, cfg.DoBlockSmoothing)
+	}
+
+	dec := djpeg.NewDecoder(
+		bytes.NewReader(data),
+		djpeg.WithOutputGamma(1.8),
+		djpeg.WithBlockSmoothing(true),
+	)
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress failed: %v", err)
+	}
+	if out := dec.OutputConfig(); out.OutputGamma != 1.8 || !out.DoBlockSmoothing {
+		t.Fatalf("OutputConfig params gamma=%v block_smoothing=%v, want 1.8/true",
+			out.OutputGamma, out.DoBlockSmoothing)
+	}
+}
+
+func TestDecodeRasterConfigInvalidDecompressParameters(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	if _, err := djpeg.DecodeRasterConfig(bytes.NewReader(data), djpeg.WithOutputGamma(-1)); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("DecodeRasterConfig negative gamma error = %v, want ErrInvalidOption", err)
+	}
+	opts := &djpeg.Options{BlockSmoothing: djpeg.BlockSmoothingMode(99)}
+	if _, err := djpeg.DecodeRasterConfigWithOptions(bytes.NewReader(data), opts); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("DecodeRasterConfig invalid block smoothing error = %v, want ErrInvalidOption", err)
 	}
 }
 
@@ -680,6 +1562,18 @@ func TestSavedMarkersInvalidMarkerCode(t *testing.T) {
 	dec := djpeg.NewDecoder(bytes.NewReader(nil), djpeg.WithSavedMarkers(0xd8, 10))
 	if _, err := dec.ReadHeader(); !errors.Is(err, djpeg.ErrInvalidOption) {
 		t.Fatalf("ReadHeader invalid saved marker error = %v, want ErrInvalidOption", err)
+	}
+
+	dec = djpeg.NewDecoder(bytes.NewReader(nil), djpeg.WithMarkerProcessor(0xd8, func(marker djpeg.Marker) error {
+		return nil
+	}))
+	if _, err := dec.ReadHeader(); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("ReadHeader invalid marker processor code error = %v, want ErrInvalidOption", err)
+	}
+
+	dec = djpeg.NewDecoder(bytes.NewReader(nil), djpeg.WithMarkerProcessor(djpeg.MarkerAPP1, nil))
+	if _, err := dec.ReadHeader(); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("ReadHeader nil marker processor error = %v, want ErrInvalidOption", err)
 	}
 }
 
@@ -939,6 +1833,123 @@ func TestDecoderSkipScanlines(t *testing.T) {
 	}
 }
 
+func TestDecoderCropScanline(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	full, err := djpeg.DecodeRaster(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeRaster reference failed: %v", err)
+	}
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	if _, _, err := dec.CropScanline(0, 1); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("CropScanline before Start error = %v, want ErrInvalidOption", err)
+	}
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress failed: %v", err)
+	}
+	x, width, err := dec.CropScanline(2, 20)
+	if err != nil {
+		t.Fatalf("CropScanline failed: %v", err)
+	}
+	if x != 2 || width != 6 {
+		t.Fatalf("CropScanline returned x=%d width=%d, want 2/6 after right clamp", x, width)
+	}
+	out := dec.OutputConfig()
+	if out.Width != 6 || out.Stride != 6 {
+		t.Fatalf("cropped output config = width %d stride %d, want 6/6", out.Width, out.Stride)
+	}
+
+	row := make([]byte, out.Stride)
+	n, err := dec.ReadScanlines([][]byte{row})
+	if err != nil {
+		t.Fatalf("ReadScanlines after crop failed: %v", err)
+	}
+	want := full.Pix[2:8]
+	if n != 1 || !bytes.Equal(row, want) {
+		t.Fatalf("cropped row read=%d equal=%v, want columns 2..7", n, bytes.Equal(row, want))
+	}
+	if skipped, err := dec.SkipScanlines(100); err != nil || skipped != 7 {
+		t.Fatalf("SkipScanlines after crop skipped=%d err=%v, want 7 nil", skipped, err)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress failed: %v", err)
+	}
+}
+
+func TestDecoderCropScanlineAfterReadRejected(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress failed: %v", err)
+	}
+	if _, err := dec.SkipScanlines(1); err != nil {
+		t.Fatalf("SkipScanlines failed: %v", err)
+	}
+	if _, _, err := dec.CropScanline(0, 1); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("CropScanline after scanline movement error = %v, want ErrInvalidOption", err)
+	}
+	if skipped, err := dec.SkipScanlines(100); err != nil || skipped != 7 {
+		t.Fatalf("final SkipScanlines skipped=%d err=%v, want 7 nil", skipped, err)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress failed: %v", err)
+	}
+}
+
+func TestDecoderCropScanlineWithScale(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	full, err := djpeg.DecodeRaster(bytes.NewReader(data), djpeg.WithScale(1, 2))
+	if err != nil {
+		t.Fatalf("DecodeRaster WithScale reference failed: %v", err)
+	}
+	dec := djpeg.NewDecoder(bytes.NewReader(data), djpeg.WithScale(1, 2))
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader WithScale failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress WithScale failed: %v", err)
+	}
+	x, width, err := dec.CropScanline(1, 2)
+	if err != nil {
+		t.Fatalf("CropScanline WithScale failed: %v", err)
+	}
+	if x != 1 || width != 2 || dec.OutputConfig().Stride != 2 {
+		t.Fatalf("scaled crop x=%d width=%d stride=%d, want 1/2/2", x, width, dec.OutputConfig().Stride)
+	}
+	row := make([]byte, dec.OutputConfig().Stride)
+	n, err := dec.ReadScanlines([][]byte{row})
+	if err != nil {
+		t.Fatalf("ReadScanlines scaled crop failed: %v", err)
+	}
+	want := full.Pix[1:3]
+	if n != 1 || !bytes.Equal(row, want) {
+		t.Fatalf("scaled cropped row read=%d equal=%v, want columns 1..2", n, bytes.Equal(row, want))
+	}
+	if skipped, err := dec.SkipScanlines(100); err != nil || skipped != 3 {
+		t.Fatalf("scaled final skip skipped=%d err=%v, want 3 nil", skipped, err)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress WithScale failed: %v", err)
+	}
+}
+
 func TestDecoderSkipScanlinesWithScale(t *testing.T) {
 	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
 	if err != nil {
@@ -1135,6 +2146,22 @@ func TestDecodeProgressiveReturnsUnsupported(t *testing.T) {
 	if !errors.Is(err, djpeg.ErrUnsupported) {
 		t.Fatalf("DecodeRaster error = %v, want ErrUnsupported", err)
 	}
+}
+
+func insertHeaderMarker(data []byte, markerCode int, payload []byte) []byte {
+	if len(data) < 2 || data[0] != 0xff || data[1] != 0xd8 {
+		panic("test JPEG must start with SOI")
+	}
+	length := len(payload) + 2
+	if length > 0xffff {
+		panic("test marker payload too large")
+	}
+	out := make([]byte, 0, len(data)+len(payload)+4)
+	out = append(out, data[:2]...)
+	out = append(out, 0xff, byte(markerCode), byte(length>>8), byte(length))
+	out = append(out, payload...)
+	out = append(out, data[2:]...)
+	return out
 }
 
 func loadPNGRGB(t *testing.T, path string) ([]byte, int, int) {

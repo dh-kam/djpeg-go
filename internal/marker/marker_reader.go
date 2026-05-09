@@ -38,6 +38,9 @@ type markerReader struct {
 // Returns error on failure, nil on success.
 type markerProcessor func(d *Decompressor) error
 
+// MarkerDataProcessor handles the payload bytes of an APPn or COM marker.
+type MarkerDataProcessor func(markerCode int, originalLength uint, data []byte) error
+
 // readBytes reads exactly n bytes from the source.
 // Returns the bytes or an error (io.ErrUnexpectedEOF if partial).
 func (mr *markerReader) readBytes(d *Decompressor, n int) ([]byte, error) {
@@ -864,6 +867,27 @@ func skipVariable(d *Decompressor) error {
 	return nil
 }
 
+func processMarkerData(processor MarkerDataProcessor) markerProcessor {
+	return func(d *Decompressor) error {
+		mr := d.marker
+
+		l, err := mr.readUint16(d)
+		if err != nil {
+			return err
+		}
+		length := int(l) - 2
+		if length < 0 {
+			return ErrBadLength
+		}
+
+		data, err := mr.readBytes(d, length)
+		if err != nil {
+			return err
+		}
+		return processor(d.UnreadMarker, uint(length), data)
+	}
+}
+
 // nextMarker finds the next JPEG marker, saves it in d.UnreadMarker.
 func nextMarker(d *Decompressor) error {
 	mr := d.marker
@@ -1192,4 +1216,10 @@ func (d *Decompressor) SetMarkerProcessor(markerCode int, processor func(d *Deco
 	} else if markerCode >= M_APP0 && markerCode <= M_APP15 {
 		mr.processAPPn[markerCode-M_APP0] = processor
 	}
+}
+
+// SetMarkerDataProcessor installs a payload-oriented processing method for COM
+// or APPn markers.
+func (d *Decompressor) SetMarkerDataProcessor(markerCode int, processor MarkerDataProcessor) {
+	d.SetMarkerProcessor(markerCode, processMarkerData(processor))
 }

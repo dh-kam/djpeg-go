@@ -14,12 +14,13 @@ const (
 	PixelFormatRGB24
 	PixelFormatCMYK32
 	PixelFormatYCCK32
+	PixelFormatIndexed8
 )
 
 // Channels returns the number of bytes per pixel.
 func (f PixelFormat) Channels() int {
 	switch f {
-	case PixelFormatGray8:
+	case PixelFormatGray8, PixelFormatIndexed8:
 		return 1
 	case PixelFormatRGB24:
 		return 3
@@ -40,6 +41,8 @@ func (f PixelFormat) String() string {
 		return "cmyk32"
 	case PixelFormatYCCK32:
 		return "ycck32"
+	case PixelFormatIndexed8:
+		return "indexed8"
 	default:
 		return "unknown"
 	}
@@ -87,10 +90,11 @@ func (c ColorSpace) String() string {
 // Raster implements image.Image; At is intended for interoperability, while
 // Pix is the efficient access path.
 type Raster struct {
-	Pix    []byte
-	Stride int
-	Rect   image.Rectangle
-	Format PixelFormat
+	Pix     []byte
+	Stride  int
+	Rect    image.Rectangle
+	Format  PixelFormat
+	Palette color.Palette
 }
 
 // NewRaster allocates a Raster for the requested dimensions and pixel format.
@@ -122,6 +126,11 @@ func (r *Raster) ColorModel() color.Model {
 		return color.RGBAModel
 	}
 	switch r.Format {
+	case PixelFormatIndexed8:
+		if len(r.Palette) > 0 {
+			return r.Palette
+		}
+		return color.RGBAModel
 	case PixelFormatGray8:
 		return color.GrayModel
 	case PixelFormatCMYK32:
@@ -138,6 +147,12 @@ func (r *Raster) At(x, y int) color.Color {
 	}
 	i := (y-r.Rect.Min.Y)*r.Stride + (x-r.Rect.Min.X)*r.Format.Channels()
 	switch r.Format {
+	case PixelFormatIndexed8:
+		if len(r.Palette) == 0 {
+			v := r.Pix[i]
+			return color.RGBA{R: v, G: v, B: v, A: 0xff}
+		}
+		return r.Palette[int(r.Pix[i])%len(r.Palette)]
 	case PixelFormatGray8:
 		return color.Gray{Y: r.Pix[i]}
 	case PixelFormatRGB24:
@@ -161,6 +176,22 @@ func (r *Raster) RGBA() *image.RGBA {
 	width := r.Rect.Dx()
 	height := r.Rect.Dy()
 	switch r.Format {
+	case PixelFormatIndexed8:
+		for y := 0; y < height; y++ {
+			src := r.Pix[y*r.Stride : y*r.Stride+width]
+			dst := out.Pix[y*out.Stride : y*out.Stride+width*4]
+			for x, idx := range src {
+				red, green, blue, alpha := uint32(idx)<<8, uint32(idx)<<8, uint32(idx)<<8, uint32(0xffff)
+				if len(r.Palette) > 0 {
+					red, green, blue, alpha = r.Palette[int(idx)%len(r.Palette)].RGBA()
+				}
+				d := x * 4
+				dst[d] = byte(red >> 8)
+				dst[d+1] = byte(green >> 8)
+				dst[d+2] = byte(blue >> 8)
+				dst[d+3] = byte(alpha >> 8)
+			}
+		}
 	case PixelFormatGray8:
 		for y := 0; y < height; y++ {
 			src := r.Pix[y*r.Stride : y*r.Stride+width]

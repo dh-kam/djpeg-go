@@ -88,6 +88,45 @@ type SavedMarker struct {
 	Data           []byte
 }
 
+// Component describes a parsed JPEG component.
+type Component struct {
+	ID                     int
+	Index                  int
+	HSampFactor            int
+	VSampFactor            int
+	QuantizationTableIndex int
+	DCHuffmanTableIndex    int
+	ACHuffmanTableIndex    int
+	WidthInBlocks          int
+	HeightInBlocks         int
+	DownsampledWidth       int
+	DownsampledHeight      int
+	DCTHScaledSize         int
+	DCTVScaledSize         int
+	ComponentNeeded        bool
+}
+
+// RawComponent is a decoded downsampled component plane.
+type RawComponent struct {
+	Component Component
+	Width     int
+	Height    int
+	Stride    int
+	Pix       []byte
+}
+
+// CoefficientBlock is one 8x8 block of quantized DCT coefficients in natural
+// row-major order.
+type CoefficientBlock [64]int16
+
+// CoefficientComponent is one component's coefficient block array.
+type CoefficientComponent struct {
+	Component      Component
+	WidthInBlocks  int
+	HeightInBlocks int
+	Blocks         []CoefficientBlock
+}
+
 const rlColorOffset = huff.RangeSubset
 
 func New(r io.Reader) *Decoder {
@@ -116,6 +155,21 @@ func (dec *Decoder) SetFancyUpsampling(fancy bool) {
 func (dec *Decoder) SetChromaIDCTScaling(enabled bool) {
 	dec.DisableChromaIDCTScaling = !enabled
 	dec.d.DisableChromaIDCTScaling = !enabled
+}
+
+// SetRawDataOut configures libjpeg-style raw_data_out mode.
+func (dec *Decoder) SetRawDataOut(enabled bool) {
+	dec.d.RawDataOut = enabled
+}
+
+// SetOutputGamma configures libjpeg's output_gamma parameter.
+func (dec *Decoder) SetOutputGamma(gamma float64) {
+	dec.d.OutputGamma = gamma
+}
+
+// SetBlockSmoothing configures libjpeg's do_block_smoothing parameter.
+func (dec *Decoder) SetBlockSmoothing(enabled bool) {
+	dec.d.DoBlockSmoothing = enabled
 }
 
 // SetInputColorSpace overrides the JPEG sample colorspace inferred from
@@ -200,6 +254,27 @@ func (dec *Decoder) SaveMarkers(markerCode int, lengthLimit uint) error {
 	return nil
 }
 
+// SetMarkerProcessor configures APPn or COM marker callback processing before
+// ReadHeader.
+func (dec *Decoder) SetMarkerProcessor(markerCode int, processor func(SavedMarker) error) error {
+	if markerCode != marker.M_COM && (markerCode < marker.M_APP0 || markerCode > marker.M_APP15) {
+		return errors.New("jpeg: unsupported marker processor code")
+	}
+	if processor == nil {
+		return errors.New("jpeg: nil marker processor")
+	}
+	dec.d.SetMarkerDataProcessor(markerCode, func(code int, originalLength uint, data []byte) error {
+		payload := make([]byte, len(data))
+		copy(payload, data)
+		return processor(SavedMarker{
+			Code:           code,
+			OriginalLength: originalLength,
+			Data:           payload,
+		})
+	})
+	return nil
+}
+
 // SavedMarkers returns a copy of markers retained while reading the header.
 func (dec *Decoder) SavedMarkers() []SavedMarker {
 	var out []SavedMarker
@@ -259,6 +334,10 @@ func (dec *Decoder) SetMaxMemory(bytes int64) error {
 	return nil
 }
 
+func (dec *Decoder) ConsumeInput() (int, error) {
+	return dec.d.ConsumeInput()
+}
+
 func (dec *Decoder) applyInputColorSpaceOverride() {
 	if !dec.hasInputColorSpaceOverride {
 		return
@@ -306,6 +385,19 @@ func (dec *Decoder) ReadHeader() (int, int, int, marker.ColorSpace, error) {
 	dec.applyOutputColorSpaceOverride()
 	dec.applyColorTransformOverride()
 	return dec.d.ImageWidth, dec.d.ImageHeight, dec.d.NumComponents, dec.d.JPEGColorSpace, nil
+}
+
+func (dec *Decoder) ReadHeaderStatus(requireImage bool) (int, error) {
+	retcode, err := dec.d.ReadHeader(requireImage)
+	if err != nil {
+		return retcode, err
+	}
+	if retcode == marker.JPEGHeaderOK {
+		dec.applyInputColorSpaceOverride()
+		dec.applyOutputColorSpaceOverride()
+		dec.applyColorTransformOverride()
+	}
+	return retcode, nil
 }
 
 func (dec *Decoder) StartDecompress() error {
@@ -367,17 +459,43 @@ func (dec *Decoder) StartDecompress() error {
 	return nil
 }
 
-func (dec *Decoder) OutputWidth() int                  { return dec.d.OutputWidth }
-func (dec *Decoder) OutputHeight() int                 { return dec.d.OutputHeight }
-func (dec *Decoder) OutputComponents() int             { return dec.d.OutputComponents }
-func (dec *Decoder) OutputScanline() int               { return dec.d.OutputScanline }
-func (dec *Decoder) OutColorSpace() marker.ColorSpace  { return dec.d.OutColorSpace }
-func (dec *Decoder) JPEGColorSpace() marker.ColorSpace { return dec.d.JPEGColorSpace }
-func (dec *Decoder) IsBaseline() bool                  { return dec.d.IsBaselineJPEG() }
-func (dec *Decoder) IsProgressive() bool               { return dec.d.IsProgressive() }
-func (dec *Decoder) IsArithmetic() bool                { return dec.d.ArithCodeFlag }
-func (dec *Decoder) InputComplete() bool               { return dec.d.InputComplete() }
-func (dec *Decoder) HasMultipleScans() bool            { return dec.d.HasMultipleScans() }
+func (dec *Decoder) OutputWidth() int                   { return dec.d.OutputWidth }
+func (dec *Decoder) OutputHeight() int                  { return dec.d.OutputHeight }
+func (dec *Decoder) OutputComponents() int              { return dec.d.OutputComponents }
+func (dec *Decoder) OutputScanline() int                { return dec.d.OutputScanline }
+func (dec *Decoder) OutColorSpace() marker.ColorSpace   { return dec.d.OutColorSpace }
+func (dec *Decoder) JPEGColorSpace() marker.ColorSpace  { return dec.d.JPEGColorSpace }
+func (dec *Decoder) RawDataOut() bool                   { return dec.d.RawDataOut }
+func (dec *Decoder) OutputGamma() float64               { return dec.d.OutputGamma }
+func (dec *Decoder) DoBlockSmoothing() bool             { return dec.d.DoBlockSmoothing }
+func (dec *Decoder) ImageWidth() int                    { return dec.d.ImageWidth }
+func (dec *Decoder) ImageHeight() int                   { return dec.d.ImageHeight }
+func (dec *Decoder) NumComponents() int                 { return dec.d.NumComponents }
+func (dec *Decoder) DataPrecision() int                 { return dec.d.DataPrecision }
+func (dec *Decoder) MaxHSampFactor() int                { return dec.d.MaxHSampFactor }
+func (dec *Decoder) MaxVSampFactor() int                { return dec.d.MaxVSampFactor }
+func (dec *Decoder) MinDCTHScaledSize() int             { return dec.d.MinDCTHScaledSize }
+func (dec *Decoder) MinDCTVScaledSize() int             { return dec.d.MinDCTVScaledSize }
+func (dec *Decoder) BlockSize() int                     { return dec.d.BlockSize }
+func (dec *Decoder) ScaleNum() uint                     { return dec.d.ScaleNum }
+func (dec *Decoder) ScaleDenom() uint                   { return dec.d.ScaleDenom }
+func (dec *Decoder) IsBaseline() bool                   { return dec.d.IsBaselineJPEG() }
+func (dec *Decoder) IsProgressive() bool                { return dec.d.IsProgressive() }
+func (dec *Decoder) IsArithmetic() bool                 { return dec.d.ArithCodeFlag }
+func (dec *Decoder) InputComplete() bool                { return dec.d.InputComplete() }
+func (dec *Decoder) HasMultipleScans() bool             { return dec.d.HasMultipleScans() }
+func (dec *Decoder) InputScanNumber() int               { return dec.d.InputScanNumber }
+func (dec *Decoder) OutputScanNumber() int              { return dec.d.OutputScanNumber }
+func (dec *Decoder) RecommendedOutputBufferHeight() int { return dec.d.RecOutbufHeight }
+
+func (dec *Decoder) CalcOutputDimensions() {
+	dec.applyInputColorSpaceOverride()
+	dec.applyOutputColorSpaceOverride()
+	dec.applyColorTransformOverride()
+	dec.d.DoFancyUpsampling = dec.DoFancyUpsampling
+	dec.d.DisableChromaIDCTScaling = dec.DisableChromaIDCTScaling
+	marker.CalcOutputDimensions(dec.d)
+}
 
 func (dec *Decoder) JFIFInfo() (saw bool, major, minor, densityUnit uint8, xDensity, yDensity uint16) {
 	return dec.d.SawJFIFMarker,
@@ -390,6 +508,215 @@ func (dec *Decoder) JFIFInfo() (saw bool, major, minor, densityUnit uint8, xDens
 
 func (dec *Decoder) AdobeInfo() (saw bool, transform uint8) {
 	return dec.d.SawAdobeMarker, dec.d.AdobeTransform
+}
+
+func (dec *Decoder) RestartInterval() uint {
+	return dec.d.RestartInterval
+}
+
+func (dec *Decoder) Components() []Component {
+	out := make([]Component, 0, dec.d.NumComponents)
+	for i := 0; i < dec.d.NumComponents; i++ {
+		comp := dec.d.Component(i)
+		if comp == nil {
+			continue
+		}
+		out = append(out, Component{
+			ID:                     comp.ComponentID,
+			Index:                  comp.ComponentIndex,
+			HSampFactor:            comp.HSampFactor,
+			VSampFactor:            comp.VSampFactor,
+			QuantizationTableIndex: comp.QuantTblNo,
+			DCHuffmanTableIndex:    comp.DCTblNo,
+			ACHuffmanTableIndex:    comp.ACTblNo,
+			WidthInBlocks:          comp.WidthInBlocks,
+			HeightInBlocks:         comp.HeightInBlocks,
+			DownsampledWidth:       comp.DownsampledWidth,
+			DownsampledHeight:      comp.DownsampledHeight,
+			DCTHScaledSize:         comp.DCHScaledSize,
+			DCTVScaledSize:         comp.DCVScaledSize,
+			ComponentNeeded:        comp.ComponentNeeded,
+		})
+	}
+	return out
+}
+
+// ReadCoefficients decodes baseline sequential entropy data into quantized DCT
+// coefficient arrays. It mirrors the baseline portion of jpeg_read_coefficients.
+func (dec *Decoder) ReadCoefficients() ([]CoefficientComponent, error) {
+	d := dec.d
+	if d.GlobalState != marker.DStateReady {
+		return nil, marker.ErrBadState
+	}
+	if d.IsProgressive() {
+		return nil, errors.New("jpeg: progressive coefficient decoding not yet supported")
+	}
+	if d.ArithCodeFlag {
+		return nil, errors.New("jpeg: arithmetic coefficient decoding not supported")
+	}
+
+	dec.memoryUsed = 0
+	dec.applyInputColorSpaceOverride()
+	dec.applyOutputColorSpaceOverride()
+	dec.applyColorTransformOverride()
+	if err := d.StartInputPass(); err != nil {
+		return nil, err
+	}
+	if err := dec.buildHuffmanTables(); err != nil {
+		return nil, err
+	}
+	dec.restartsToGo = int(d.RestartInterval)
+	dec.insufficient = false
+	dec.unreadMarker = 0
+	dec.permState = huff.BitReadState{}
+	dec.savedState = huff.SavableState{}
+	dec.workState = huff.BitReadWorkingState{}
+	dec.mcuMembership = make([]int, d.BlocksInMCU)
+	copy(dec.mcuMembership, d.MCUMembership[:d.BlocksInMCU])
+	dec.blocks = make([]huff.Block, d.BlocksInMCU)
+
+	if err := dec.readAllScanData(); err != nil {
+		return nil, err
+	}
+	huff.InitBitReader(&dec.workState, dec.scanData)
+
+	out, err := dec.allocCoefficientComponents()
+	if err != nil {
+		return nil, err
+	}
+	for dec.currentIMCURow = 0; dec.currentIMCURow < d.MCURowsInScan; dec.currentIMCURow++ {
+		if err := dec.decodeCoefficientMCURow(out); err != nil {
+			return nil, err
+		}
+	}
+	dec.allDecoded = true
+	d.OutputScanline = d.OutputHeight
+	return out, nil
+}
+
+func (dec *Decoder) allocCoefficientComponents() ([]CoefficientComponent, error) {
+	components := dec.Components()
+	out := make([]CoefficientComponent, len(components))
+	for i, comp := range components {
+		blockCount, err := checkedBufferLen(comp.HeightInBlocks, comp.WidthInBlocks)
+		if err != nil {
+			return nil, err
+		}
+		if blockCount > 0 {
+			if blockCount > int(^uint(0)>>1)/(huff.DCTSize2*2) {
+				return nil, fmt.Errorf("%w: coefficient buffer too large blocks=%d", ErrMemoryLimitExceeded, blockCount)
+			}
+			if err := dec.reserveMemory(int64(blockCount*huff.DCTSize2*2), fmt.Sprintf("component %d coefficients", i)); err != nil {
+				return nil, err
+			}
+		}
+		out[i] = CoefficientComponent{
+			Component:      comp,
+			WidthInBlocks:  comp.WidthInBlocks,
+			HeightInBlocks: comp.HeightInBlocks,
+			Blocks:         make([]CoefficientBlock, blockCount),
+		}
+	}
+	return out, nil
+}
+
+func (dec *Decoder) decodeCoefficientMCURow(out []CoefficientComponent) error {
+	d := dec.d
+	mcusPerRow := d.MCUsPerRow
+	blocksInMCU := d.BlocksInMCU
+	blocks := dec.blocks
+
+	for mcuCol := 0; mcuCol < mcusPerRow; mcuCol++ {
+		for i := range blocks {
+			blocks[i] = huff.Block{}
+		}
+		if d.RestartInterval != 0 {
+			if dec.restartsToGo == 0 {
+				dec.savedState = huff.SavableState{}
+				dec.unreadMarker = 0
+				dec.insufficient = false
+				dec.restartsToGo = int(d.RestartInterval)
+			}
+			dec.restartsToGo--
+		}
+		_ = huff.DecodeMCUSequential(
+			&dec.workState, &dec.permState, &dec.savedState, blocks,
+			dec.dcTables, dec.acTables, blocksInMCU, dec.mcuMembership,
+			0, &dec.restartsToGo, &dec.insufficient, &dec.unreadMarker,
+		)
+		dec.routeCoefficientBlocks(out, blocks, mcuCol)
+	}
+	return nil
+}
+
+func (dec *Decoder) routeCoefficientBlocks(out []CoefficientComponent, blocks []huff.Block, mcuCol int) {
+	d := dec.d
+	blkIdx := 0
+	for ci := 0; ci < d.CompsInScan; ci++ {
+		comp := d.CurCompInfo[ci]
+		dst := &out[comp.ComponentIndex]
+		for yIndex := 0; yIndex < comp.MCUHeight; yIndex++ {
+			blockY := dec.currentIMCURow*comp.MCUHeight + yIndex
+			for xIndex := 0; xIndex < comp.MCUWidth; xIndex++ {
+				blockX := mcuCol*comp.MCUWidth + xIndex
+				srcBlock := blocks[blkIdx+xIndex]
+				if blockY < dst.HeightInBlocks && blockX < dst.WidthInBlocks {
+					copy(dst.Blocks[blockY*dst.WidthInBlocks+blockX][:], srcBlock[:])
+				}
+			}
+			blkIdx += comp.MCUWidth
+		}
+	}
+}
+
+// ReadRawData returns decoded downsampled component planes. It requires
+// raw_data_out mode and advances OutputScanline to the end of the image,
+// matching an all-at-once jpeg_read_raw_data facade.
+func (dec *Decoder) ReadRawData() ([]RawComponent, error) {
+	if dec.d.GlobalState != marker.DStateRawOK {
+		return nil, marker.ErrBadState
+	}
+	if !dec.allDecoded {
+		for dec.currentIMCURow < dec.totalIMCURows {
+			dec.decodeIMCURow()
+			dec.currentIMCURow++
+		}
+		dec.allDecoded = true
+	}
+
+	components := dec.Components()
+	out := make([]RawComponent, 0, len(components))
+	for i, comp := range components {
+		if i >= len(dec.componentBuf) {
+			continue
+		}
+		rows := dec.componentBuf[i]
+		if len(rows) == 0 || len(rows[0]) == 0 {
+			continue
+		}
+		height := comp.DownsampledHeight
+		if height <= 0 || height > len(rows) {
+			height = len(rows)
+		}
+		stride := len(rows[0])
+		pix := make([]byte, height*stride)
+		for y := 0; y < height; y++ {
+			copy(pix[y*stride:(y+1)*stride], rows[y])
+		}
+		width := comp.DownsampledWidth
+		if width <= 0 || width > stride {
+			width = stride
+		}
+		out = append(out, RawComponent{
+			Component: comp,
+			Width:     width,
+			Height:    height,
+			Stride:    stride,
+			Pix:       pix,
+		})
+	}
+	dec.d.OutputScanline = dec.d.OutputHeight
+	return out, nil
 }
 
 func (dec *Decoder) QuantizationTable(index int) (values [64]uint16, sent bool, ok bool) {
@@ -1339,6 +1666,7 @@ func (dec *Decoder) setupColorPipeline() error {
 		OutputComponents:   d.OutputComponents,
 		ProgressiveMode:    d.ProgressiveMode,
 		QuantizeColors:     d.QuantizeColors,
+		DoBlockSmoothing:   d.DoBlockSmoothing,
 		CompsInScan:        d.CompsInScan,
 		TotalIMCURows:      d.TotalIMCURows,
 		MCUsPerRow:         d.MCUsPerRow,
@@ -1409,6 +1737,11 @@ func (dec *Decoder) setupColorPipeline() error {
 	}
 
 	dec.colorConv = color.NewColorConverter(info)
+	if d.RawDataOut {
+		for ci := 0; ci < d.NumComponents; ci++ {
+			info.CompInfo[ci].ComponentNeeded = true
+		}
+	}
 	for ci := 0; ci < d.NumComponents; ci++ {
 		d.CompInfo[ci].ComponentNeeded = info.CompInfo[ci].ComponentNeeded
 	}

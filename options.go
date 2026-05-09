@@ -3,6 +3,7 @@ package djpeg
 import (
 	"errors"
 	"fmt"
+	"image/color"
 	"math"
 	"strconv"
 	"strings"
@@ -35,12 +36,28 @@ type Options struct {
 	ScaleNumerator    int
 	ScaleDenominator  int
 	SavedMarkers      []SavedMarkerOption
+	MarkerProcessors  []MarkerProcessorOption
+	QuantizeColors    bool
+	DesiredNumColors  int
+	DitherMode        DitherMode
+	Colormap          color.Palette
+	RawDataOut        bool
+	BufferedImage     bool
+	OutputGamma       float64
+	BlockSmoothing    BlockSmoothingMode
 }
 
 // SavedMarkerOption configures marker data retention during ReadHeader.
 type SavedMarkerOption struct {
 	Code        int
 	LengthLimit uint
+}
+
+// MarkerProcessorOption configures marker callback processing during
+// ReadHeader.
+type MarkerProcessorOption struct {
+	Code      int
+	Processor MarkerProcessor
 }
 
 // IDCTMethod selects the inverse DCT implementation.
@@ -107,6 +124,25 @@ const (
 	InputYCbCr
 	InputCMYK
 	InputYCCK
+)
+
+// DitherMode selects palette dithering for quantized output.
+type DitherMode int
+
+const (
+	DitherDefault DitherMode = iota
+	DitherNone
+	DitherOrdered
+	DitherFloydSteinberg
+)
+
+// BlockSmoothingMode controls progressive block smoothing.
+type BlockSmoothingMode int
+
+const (
+	BlockSmoothingDefault BlockSmoothingMode = iota
+	BlockSmoothingEnabled
+	BlockSmoothingDisabled
 )
 
 // WithIDCT selects the inverse DCT method.
@@ -229,6 +265,81 @@ func WithSavedMarkers(markerCode int, lengthLimit uint) Option {
 	}
 }
 
+// WithQuantizeColors requests palette-indexed output, mirroring libjpeg's
+// quantize_colors and desired_number_of_colors parameters. desiredNumColors of
+// zero uses the libjpeg-style default of 256 colors.
+func WithQuantizeColors(desiredNumColors int) Option {
+	return func(opts *Options) {
+		opts.QuantizeColors = true
+		opts.DesiredNumColors = desiredNumColors
+	}
+}
+
+// WithDitherMode selects the dithering mode used for quantized output.
+func WithDitherMode(mode DitherMode) Option {
+	return func(opts *Options) {
+		opts.DitherMode = mode
+	}
+}
+
+// WithColormap requests palette-indexed output using an externally supplied
+// colormap, mirroring libjpeg's external-colormap quantization mode.
+func WithColormap(palette color.Palette) Option {
+	return func(opts *Options) {
+		opts.QuantizeColors = true
+		opts.Colormap = append(color.Palette(nil), palette...)
+	}
+}
+
+// WithRawDataOutput requests libjpeg-style raw_data_out mode. Use
+// DecodeRawComponents or Decoder.ReadRawData instead of scanline output.
+func WithRawDataOutput() Option {
+	return func(opts *Options) {
+		opts.RawDataOut = true
+	}
+}
+
+// WithBufferedImage enables libjpeg-style buffered-image output passes. Use
+// Decoder.StartOutput and Decoder.FinishOutput around each scanline pass.
+func WithBufferedImage() Option {
+	return func(opts *Options) {
+		opts.BufferedImage = true
+	}
+}
+
+// WithOutputGamma sets libjpeg's output_gamma decompression parameter. A
+// positive value is required; the default is 1.0.
+func WithOutputGamma(gamma float64) Option {
+	return func(opts *Options) {
+		opts.OutputGamma = gamma
+	}
+}
+
+// WithBlockSmoothing controls libjpeg's do_block_smoothing parameter for
+// progressive output passes.
+func WithBlockSmoothing(enabled bool) Option {
+	return func(opts *Options) {
+		if enabled {
+			opts.BlockSmoothing = BlockSmoothingEnabled
+		} else {
+			opts.BlockSmoothing = BlockSmoothingDisabled
+		}
+	}
+}
+
+// WithMarkerProcessor mirrors libjpeg's jpeg_set_marker_processor API for COM
+// and APPn markers. The processor must be installed before ReadHeader. If a
+// processor is configured for the same marker as WithSavedMarkers, the
+// processor takes precedence.
+func WithMarkerProcessor(markerCode int, processor MarkerProcessor) Option {
+	return func(opts *Options) {
+		opts.MarkerProcessors = append(opts.MarkerProcessors, MarkerProcessorOption{
+			Code:      markerCode,
+			Processor: processor,
+		})
+	}
+}
+
 // ParseIDCTMethod converts a CLI-style IDCT name into an IDCTMethod.
 func ParseIDCTMethod(s string) (IDCTMethod, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
@@ -294,6 +405,22 @@ func ParseColorTransform(s string) (ColorTransform, error) {
 		return ColorTransformSubtractGreen, nil
 	default:
 		return ColorTransformDefault, fmt.Errorf("%w: unknown color transform %q", ErrInvalidOption, s)
+	}
+}
+
+// ParseDitherMode converts a libjpeg-style dither name.
+func ParseDitherMode(s string) (DitherMode, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "default":
+		return DitherDefault, nil
+	case "none":
+		return DitherNone, nil
+	case "ordered":
+		return DitherOrdered, nil
+	case "fs", "floyd", "floyd-steinberg":
+		return DitherFloydSteinberg, nil
+	default:
+		return DitherDefault, fmt.Errorf("%w: unknown dither mode %q", ErrInvalidOption, s)
 	}
 }
 
@@ -497,6 +624,32 @@ func (m CompatibilityMode) String() string {
 		return "poppler-pdf"
 	default:
 		return fmt.Sprintf("unknown(%d)", m)
+	}
+}
+
+func (m BlockSmoothingMode) String() string {
+	switch m {
+	case BlockSmoothingDefault:
+		return "default"
+	case BlockSmoothingEnabled:
+		return "enabled"
+	case BlockSmoothingDisabled:
+		return "disabled"
+	default:
+		return fmt.Sprintf("unknown(%d)", m)
+	}
+}
+
+func (m BlockSmoothingMode) value() (enabled bool, explicit bool, err error) {
+	switch m {
+	case BlockSmoothingDefault:
+		return false, false, nil
+	case BlockSmoothingEnabled:
+		return true, true, nil
+	case BlockSmoothingDisabled:
+		return false, true, nil
+	default:
+		return false, false, fmt.Errorf("%w: unknown block smoothing mode %d", ErrInvalidOption, m)
 	}
 }
 
