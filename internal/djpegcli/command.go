@@ -24,24 +24,25 @@ var (
 
 // Options holds the parsed command-line options.
 type Options struct {
-	OutFile         string `flag:"outfile" usage:"Write output to NAME"`
-	Verbose         bool   `flag:"verbose" usage:"Verbose output"`
-	Grayscale       bool   `flag:"grayscale" usage:"Force grayscale output"`
-	ForceRGB        bool   `flag:"rgb" usage:"Force RGB output"`
-	NumColors       int    `flag:"colors" usage:"Reduce image to no more than N colors"`
-	Fast            bool   `flag:"fast" usage:"Fast, low-quality processing"`
-	NoSmooth        bool   `flag:"nosmooth" usage:"Don't use high-quality upsampling"`
-	OnePass         bool   `flag:"onepass" usage:"Use 1-pass quantization"`
-	DctMethod       string `flag:"dct" usage:"IDCT method: int, fast, float"`
-	DitherMode      string `flag:"dither" usage:"Dithering: fs, none, ordered"`
-	MapFile         string `flag:"map" usage:"Map to colors from a GIF/PPM file"`
-	MaxMemory       string `flag:"maxmemory" usage:"Maximum memory (KB or MB with m)"`
-	Scale           string `flag:"scale" usage:"Scale output image by fraction M/N"`
-	InputColorSpace string `flag:"input-colorspace" usage:"Interpret JPEG samples as auto, grayscale, rgb, ycbcr, cmyk, ycck, big-gamut-rgb, or big-gamut-ycbcr"`
-	ColorTransform  string `flag:"color-transform" usage:"Inverse color transform: auto, none, subtract-green"`
-	Compatibility   string `flag:"compatibility" usage:"Compatibility profile: default, ijg9, poppler-pdf"`
-	TurboFancy      bool   `flag:"turbo-fancy" usage:"Deprecated alias for --compatibility poppler-pdf"`
-	CPUProfile      string `flag:"cpuprofile" usage:"Write CPU profile to FILE"`
+	OutFile          string `flag:"outfile" usage:"Write output to NAME"`
+	Verbose          bool   `flag:"verbose" usage:"Verbose output"`
+	Grayscale        bool   `flag:"grayscale" usage:"Force grayscale output"`
+	ForceRGB         bool   `flag:"rgb" usage:"Force RGB output"`
+	NumColors        int    `flag:"colors" usage:"Reduce image to no more than N colors"`
+	Fast             bool   `flag:"fast" usage:"Fast, low-quality processing"`
+	NoSmooth         bool   `flag:"nosmooth" usage:"Don't use high-quality upsampling"`
+	OnePass          bool   `flag:"onepass" usage:"Use 1-pass quantization"`
+	DctMethod        string `flag:"dct" usage:"IDCT method: int, fast, float"`
+	DitherMode       string `flag:"dither" usage:"Dithering: fs, none, ordered"`
+	MapFile          string `flag:"map" usage:"Map to colors from a GIF/PPM file"`
+	MaxMemory        string `flag:"maxmemory" usage:"Maximum memory (KB or MB with m)"`
+	Scale            string `flag:"scale" usage:"Scale output image by fraction M/N"`
+	InputColorSpace  string `flag:"input-colorspace" usage:"Interpret JPEG samples as auto, grayscale, rgb, ycbcr, cmyk, ycck, big-gamut-rgb, or big-gamut-ycbcr"`
+	OutputColorSpace string `flag:"output-colorspace" usage:"Force output samples as auto, grayscale, rgb, ycbcr, cmyk, ycck, big-gamut-rgb, or big-gamut-ycbcr"`
+	ColorTransform   string `flag:"color-transform" usage:"Inverse color transform: auto, none, subtract-green"`
+	Compatibility    string `flag:"compatibility" usage:"Compatibility profile: default, ijg9, poppler-pdf"`
+	TurboFancy       bool   `flag:"turbo-fancy" usage:"Deprecated alias for --compatibility poppler-pdf"`
+	CPUProfile       string `flag:"cpuprofile" usage:"Write CPU profile to FILE"`
 
 	FmtPPM   bool `flag:"ppm" usage:"Output PPM/PGM format"`
 	FmtBMP   bool `flag:"bmp" usage:"Output BMP format"`
@@ -76,6 +77,7 @@ func NewRootCommand() *cobra.Command {
 		String("maxmemory", "", "Maximum memory (KB or MB with m)").
 		String("scale", "", "Scale output image by fraction M/N").
 		String("input-colorspace", "auto", "Interpret JPEG samples as auto, grayscale, rgb, ycbcr, cmyk, ycck, big-gamut-rgb, or big-gamut-ycbcr").
+		String("output-colorspace", "auto", "Force output samples as auto, grayscale, rgb, ycbcr, cmyk, ycck, big-gamut-rgb, or big-gamut-ycbcr").
 		String("color-transform", "auto", "Inverse color transform: auto, none, subtract-green").
 		String("compatibility", "default", "Compatibility profile: default, ijg9, poppler-pdf").
 		Bool("turbo-fancy", false, "Deprecated alias for --compatibility poppler-pdf").
@@ -426,6 +428,18 @@ func validateUnsupportedOptions(opts *Options) error {
 	if opts == nil {
 		return nil
 	}
+	if opts.OutputColorSpace != "" {
+		outputColorSpace, err := djpeg.ParseOutputColorSpace(opts.OutputColorSpace)
+		if err != nil {
+			return err
+		}
+		if opts.Grayscale && outputColorSpace != djpeg.ColorSpaceUnknown && outputColorSpace != djpeg.ColorSpaceGray {
+			return fmt.Errorf("%w: --output-colorspace conflicts with --grayscale", djpeg.ErrInvalidOption)
+		}
+		if opts.ForceRGB && outputColorSpace != djpeg.ColorSpaceUnknown && outputColorSpace != djpeg.ColorSpaceRGB {
+			return fmt.Errorf("%w: --output-colorspace conflicts with --rgb", djpeg.ErrInvalidOption)
+		}
+	}
 	switch {
 	case opts.Grayscale && opts.ForceRGB:
 		return fmt.Errorf("%w: --grayscale and --rgb cannot be used together", djpeg.ErrInvalidOption)
@@ -490,6 +504,13 @@ func decoderOptions(opts *Options) ([]djpeg.Option, error) {
 			return nil, err
 		}
 		decodeOptions = append(decodeOptions, djpeg.WithInputColorSpace(space))
+	}
+	if opts.OutputColorSpace != "" {
+		space, err := djpeg.ParseOutputColorSpace(opts.OutputColorSpace)
+		if err != nil {
+			return nil, err
+		}
+		decodeOptions = append(decodeOptions, djpeg.WithOutputColorSpace(space))
 	}
 	if opts.ColorTransform != "" {
 		transform, err := djpeg.ParseColorTransform(opts.ColorTransform)

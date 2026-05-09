@@ -107,6 +107,65 @@ func TestRGBOptionWritesPPMForGrayscaleInput(t *testing.T) {
 	}
 }
 
+func TestOutputColorSpaceOptionWritesPGMForColorInput(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile("testdata/test_420.jpg")
+	if err != nil {
+		t.Skip("test_420.jpg not available:", err)
+	}
+
+	ppm := decompressForOptionTest(t, data, &djpegcli.Options{
+		Format:           output.FormatPPM,
+		OutputColorSpace: "gray",
+	})
+
+	kind, width, height, components, pixels, err := parsePNMPixels(ppm)
+	if err != nil {
+		t.Fatalf("parsing PGM output: %v", err)
+	}
+	if kind != "P5" {
+		t.Fatalf("PNM kind = %q, want P5", kind)
+	}
+	if components != 1 {
+		t.Fatalf("components = %d, want 1", components)
+	}
+	if len(pixels) != width*height {
+		t.Fatalf("pixel length = %d, want %d", len(pixels), width*height)
+	}
+}
+
+func TestOutputColorSpaceOptionWritesPPMForGrayscaleInput(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile("testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skip("gray_8x8.jpg not available:", err)
+	}
+
+	ppm := decompressForOptionTest(t, data, &djpegcli.Options{
+		Format:           output.FormatPPM,
+		OutputColorSpace: "rgb",
+	})
+
+	kind, width, height, components, pixels, err := parsePNMPixels(ppm)
+	if err != nil {
+		t.Fatalf("parsing forced RGB PPM output: %v", err)
+	}
+	if kind != "P6" {
+		t.Fatalf("PNM kind = %q, want P6", kind)
+	}
+	if width != 8 || height != 8 {
+		t.Fatalf("dimensions = %dx%d, want 8x8", width, height)
+	}
+	if components != 3 {
+		t.Fatalf("components = %d, want 3", components)
+	}
+	if len(pixels) != width*height*components {
+		t.Fatalf("pixel length = %d, want %d", len(pixels), width*height*components)
+	}
+}
+
 func TestMaxMemoryOptionAllowsDecodeWithSufficientLimit(t *testing.T) {
 	t.Parallel()
 
@@ -371,6 +430,39 @@ func TestColorTransformOptionRejectsInvalidValue(t *testing.T) {
 	err := djpegcli.Decompress(bytes.NewReader(nil), &out, &djpegcli.Options{
 		Format:         output.FormatPPM,
 		ColorTransform: "bad",
+	})
+	if err == nil {
+		t.Fatal("expected invalid option error")
+	}
+	if !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("error = %v, want ErrInvalidOption", err)
+	}
+}
+
+func TestOutputColorSpaceOptionRejectsInvalidValue(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	err := djpegcli.Decompress(bytes.NewReader(nil), &out, &djpegcli.Options{
+		Format:           output.FormatPPM,
+		OutputColorSpace: "bad",
+	})
+	if err == nil {
+		t.Fatal("expected invalid option error")
+	}
+	if !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("error = %v, want ErrInvalidOption", err)
+	}
+}
+
+func TestOutputColorSpaceOptionRejectsAliasConflict(t *testing.T) {
+	t.Parallel()
+
+	var out bytes.Buffer
+	err := djpegcli.Decompress(bytes.NewReader(nil), &out, &djpegcli.Options{
+		Format:           output.FormatPPM,
+		Grayscale:        true,
+		OutputColorSpace: "rgb",
 	})
 	if err == nil {
 		t.Fatal("expected invalid option error")

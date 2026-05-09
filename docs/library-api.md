@@ -962,6 +962,7 @@ decoding. Progressive headers can be inspected through `ReadHeader` and
 | `--nosmooth` | `libjpeg.WithNoSmooth()` |
 | `--grayscale` | `libjpeg.WithGrayscaleOutput()` |
 | `--rgb` | `libjpeg.WithRGBOutput()` |
+| `--output-colorspace ycbcr` | `libjpeg.WithOutputColorSpace(libjpeg.ColorSpaceYCbCr)` |
 | `--maxmemory 20m` | `limit, _ := libjpeg.ParseMemoryLimit("20m"); libjpeg.WithMaxMemory(limit)` |
 | `--scale 1/2` | `libjpeg.WithScale(1, 2)` |
 | `--colors 64` | `libjpeg.WithQuantizeColors(64)` |
@@ -978,6 +979,10 @@ decoding. Progressive headers can be inspected through `ReadHeader` and
 CLI output flags such as `--ppm`, `--bmp`, `--targa`, `--rle`, and `--gif` are
 not part of the public decode facade yet. Use `DecodeRaster` and write your
 desired output format in application code.
+
+The `cmd/djpeg` output writers currently accept Gray8 and RGB24 rasters. Other
+`--output-colorspace` values are exposed for parity/debugging and library API
+coverage, but may require `DecodeRaster` until matching command writers exist.
 
 ## External Module Setup
 
