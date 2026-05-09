@@ -794,6 +794,9 @@ space, err := libjpeg.ParseInputColorSpace("rgb")
 dither, err := libjpeg.ParseDitherMode("fs")
 ```
 
+`ParseInputColorSpace` also accepts libjpeg 9 big-gamut aliases such as
+`big-gamut-rgb` and `big-gamut-ycbcr`.
+
 ## Progress Monitor
 
 `WithProgressMonitor` mirrors libjpeg's `jpeg_progress_mgr` counters at the
@@ -963,6 +966,8 @@ decoding. Progressive headers can be inspected through `ReadHeader` and
 | `--color-transform subtract-green` | `libjpeg.WithColorTransform(libjpeg.ColorTransformSubtractGreen)` |
 | `--input-colorspace ycbcr` | `libjpeg.WithInputColorSpace(libjpeg.InputYCbCr)` |
 | `--input-colorspace grayscale` | `libjpeg.WithInputColorSpace(libjpeg.InputGray)` |
+| `--input-colorspace big-gamut-rgb` | `libjpeg.WithInputColorSpace(libjpeg.InputBigGamutRGB)` |
+| `--input-colorspace big-gamut-ycbcr` | `libjpeg.WithInputColorSpace(libjpeg.InputBigGamutYCbCr)` |
 
 CLI output flags such as `--ppm`, `--bmp`, `--targa`, `--rle`, and `--gif` are
 not part of the public decode facade yet. Use `DecodeRaster` and write your

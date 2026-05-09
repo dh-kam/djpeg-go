@@ -37,7 +37,7 @@ type Options struct {
 	MapFile         string `flag:"map" usage:"Map to colors from a GIF/PPM file"`
 	MaxMemory       string `flag:"maxmemory" usage:"Maximum memory (KB or MB with m)"`
 	Scale           string `flag:"scale" usage:"Scale output image by fraction M/N"`
-	InputColorSpace string `flag:"input-colorspace" usage:"Interpret JPEG samples as auto, grayscale, rgb, ycbcr, cmyk, or ycck"`
+	InputColorSpace string `flag:"input-colorspace" usage:"Interpret JPEG samples as auto, grayscale, rgb, ycbcr, cmyk, ycck, big-gamut-rgb, or big-gamut-ycbcr"`
 	ColorTransform  string `flag:"color-transform" usage:"Inverse color transform: auto, none, subtract-green"`
 	Compatibility   string `flag:"compatibility" usage:"Compatibility profile: default, ijg9, poppler-pdf"`
 	TurboFancy      bool   `flag:"turbo-fancy" usage:"Deprecated alias for --compatibility poppler-pdf"`
@@ -75,7 +75,7 @@ func NewRootCommand() *cobra.Command {
 		String("map", "", "Map to colors from a GIF/PPM file").
 		String("maxmemory", "", "Maximum memory (KB or MB with m)").
 		String("scale", "", "Scale output image by fraction M/N").
-		String("input-colorspace", "auto", "Interpret JPEG samples as auto, grayscale, rgb, ycbcr, cmyk, or ycck").
+		String("input-colorspace", "auto", "Interpret JPEG samples as auto, grayscale, rgb, ycbcr, cmyk, ycck, big-gamut-rgb, or big-gamut-ycbcr").
 		String("color-transform", "auto", "Inverse color transform: auto, none, subtract-green").
 		String("compatibility", "default", "Compatibility profile: default, ijg9, poppler-pdf").
 		Bool("turbo-fancy", false, "Deprecated alias for --compatibility poppler-pdf").

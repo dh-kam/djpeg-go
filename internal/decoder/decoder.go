@@ -207,6 +207,10 @@ func (dec *Decoder) SetInputColorSpace(space string) error {
 		cs = marker.CSCMYK
 	case "ycck":
 		cs = marker.CSYCCK
+	case "bgrgb", "bg-rgb", "big-gamut-rgb":
+		cs = marker.CSBGRGB
+	case "bgycc", "bg-ycc", "bgycbcr", "bg-ycbcr", "big-gamut-ycc", "big-gamut-ycbcr":
+		cs = marker.CSBGYCC
 	default:
 		return errors.New("jpeg: unsupported input colorspace")
 	}
@@ -231,6 +235,8 @@ func (dec *Decoder) SetOutputColorSpace(space string) error {
 		cs = marker.CSCMYK
 	case "ycck":
 		cs = marker.CSYCCK
+	case "bgrgb", "bg-rgb", "big-gamut-rgb":
+		cs = marker.CSBGRGB
 	default:
 		return errors.New("jpeg: unsupported output colorspace")
 	}
@@ -365,8 +371,10 @@ func (dec *Decoder) applyInputColorSpaceOverride() {
 	switch dec.inputColorSpaceOverride {
 	case marker.CSGrayScale:
 		dec.d.OutColorSpace = marker.CSGrayScale
-	case marker.CSRGB, marker.CSYCbCr:
+	case marker.CSRGB, marker.CSYCbCr, marker.CSBGYCC:
 		dec.d.OutColorSpace = marker.CSRGB
+	case marker.CSBGRGB:
+		dec.d.OutColorSpace = marker.CSBGRGB
 	case marker.CSCMYK, marker.CSYCCK:
 		dec.d.OutColorSpace = marker.CSCMYK
 	}
@@ -1141,7 +1149,8 @@ func (dec *Decoder) upsampleAndConvert(outputRow []byte) {
 		return
 	}
 
-	if d.JPEGColorSpace == marker.CSRGB && d.OutColorSpace == marker.CSRGB && d.NumComponents >= 3 {
+	if (d.JPEGColorSpace == marker.CSRGB && d.OutColorSpace == marker.CSRGB ||
+		d.JPEGColorSpace == marker.CSBGRGB && d.OutColorSpace == marker.CSBGRGB) && d.NumComponents >= 3 {
 		dec.upsampleRGB(outputRow)
 		return
 	}
@@ -1920,6 +1929,8 @@ func (dec *Decoder) setupColorPipeline() error {
 		info.OutColorSpace = color.JCS_GRAYSCALE
 	case marker.CSRGB:
 		info.OutColorSpace = color.JCS_RGB
+	case marker.CSBGRGB:
+		info.OutColorSpace = color.JCS_BG_RGB
 	case marker.CSCMYK:
 		info.OutColorSpace = color.JCS_CMYK
 	case marker.CSYCCK:

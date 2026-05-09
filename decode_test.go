@@ -2575,6 +2575,8 @@ func TestParseColorSpaces(t *testing.T) {
 		{input: "ycbcr", want: djpeg.InputYCbCr},
 		{input: "cmyk", want: djpeg.InputCMYK},
 		{input: "ycck", want: djpeg.InputYCCK},
+		{input: "big-gamut-rgb", want: djpeg.InputBigGamutRGB},
+		{input: "bg-ycbcr", want: djpeg.InputBigGamutYCbCr},
 	}
 	for _, tt := range inputTests {
 		got, err := djpeg.ParseInputColorSpace(tt.input)
@@ -2594,6 +2596,7 @@ func TestParseColorSpaces(t *testing.T) {
 		{input: "rgb", want: djpeg.ColorSpaceRGB},
 		{input: "cmyk", want: djpeg.ColorSpaceCMYK},
 		{input: "ycck", want: djpeg.ColorSpaceYCCK},
+		{input: "big-gamut-rgb", want: djpeg.ColorSpaceBigGamutRGB},
 	}
 	for _, tt := range outputTests {
 		got, err := djpeg.ParseOutputColorSpace(tt.input)
@@ -2603,6 +2606,35 @@ func TestParseColorSpaces(t *testing.T) {
 		if got != tt.want {
 			t.Fatalf("ParseOutputColorSpace(%q) = %s, want %s", tt.input, got, tt.want)
 		}
+	}
+}
+
+func TestBigGamutRGBComponentIDs(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/color_16x16_420.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+	data = rewriteJPEGComponentIDs(t, data, []byte{'r', 'g', 'b'})
+
+	cfg, err := djpeg.DecodeRasterConfig(bytes.NewReader(data), djpeg.WithOutputColorSpace(djpeg.ColorSpaceBigGamutRGB))
+	if err != nil {
+		t.Fatalf("DecodeRasterConfig big-gamut RGB failed: %v", err)
+	}
+	if cfg.InputColorSpace != djpeg.ColorSpaceBigGamutRGB || cfg.ColorSpace != djpeg.ColorSpaceBigGamutRGB {
+		t.Fatalf("big-gamut config input/output colorspace = %s/%s, want big-gamut-rgb/big-gamut-rgb",
+			cfg.InputColorSpace, cfg.ColorSpace)
+	}
+	if cfg.PixelFormat != djpeg.PixelFormatRGB24 || cfg.Components != 3 {
+		t.Fatalf("big-gamut config pixel format/components = %s/%d, want rgb24/3", cfg.PixelFormat, cfg.Components)
+	}
+
+	raster, err := djpeg.DecodeRaster(bytes.NewReader(data), djpeg.WithOutputColorSpace(djpeg.ColorSpaceBigGamutRGB))
+	if err != nil {
+		t.Fatalf("DecodeRaster big-gamut RGB failed: %v", err)
+	}
+	if raster.Format != djpeg.PixelFormatRGB24 || raster.Stride != raster.Rect.Dx()*3 {
+		t.Fatalf("big-gamut raster format/stride = %s/%d, want rgb24/%d",
+			raster.Format, raster.Stride, raster.Rect.Dx()*3)
 	}
 }
 
@@ -2701,6 +2733,60 @@ func insertHeaderMarker(data []byte, markerCode int, payload []byte) []byte {
 	out = append(out, payload...)
 	out = append(out, data[2:]...)
 	return out
+}
+
+func rewriteJPEGComponentIDs(t *testing.T, data []byte, ids []byte) []byte {
+	t.Helper()
+	out := append([]byte(nil), data...)
+	sofSeen, sosSeen := false, false
+	for i := 0; i+3 < len(out); {
+		if out[i] != 0xff {
+			i++
+			continue
+		}
+		j := i + 1
+		for j < len(out) && out[j] == 0xff {
+			j++
+		}
+		if j >= len(out) {
+			break
+		}
+		marker := out[j]
+		i = j + 1
+		if marker == 0x00 || marker == 0x01 || marker == 0xd8 || marker == 0xd9 || (marker >= 0xd0 && marker <= 0xd7) {
+			continue
+		}
+		if i+2 > len(out) {
+			break
+		}
+		length := int(out[i])<<8 | int(out[i+1])
+		if length < 2 || i+length > len(out) {
+			break
+		}
+		payload := out[i+2 : i+length]
+		switch marker {
+		case 0xc0, 0xc1, 0xc2, 0xc9, 0xca:
+			if len(payload) >= 6 && int(payload[5]) == len(ids) {
+				for ci, id := range ids {
+					payload[6+ci*3] = id
+				}
+				sofSeen = true
+			}
+		case 0xda:
+			if len(payload) >= 1 && int(payload[0]) == len(ids) {
+				for ci, id := range ids {
+					payload[1+ci*2] = id
+				}
+				sosSeen = true
+			}
+			if sofSeen && sosSeen {
+				return out
+			}
+		}
+		i += length
+	}
+	t.Fatalf("failed to rewrite JPEG component IDs: sofSeen=%v sosSeen=%v", sofSeen, sosSeen)
+	return nil
 }
 
 func loadPNGRGB(t *testing.T, path string) ([]byte, int, int) {

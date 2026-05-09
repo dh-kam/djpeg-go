@@ -789,6 +789,9 @@ space, err := libjpeg.ParseInputColorSpace("rgb")
 dither, err := libjpeg.ParseDitherMode("fs")
 ```
 
+`ParseInputColorSpace`는 `big-gamut-rgb`, `big-gamut-ycbcr` 같은 libjpeg 9
+big-gamut alias도 받습니다.
+
 ## Progress Monitor
 
 `WithProgressMonitor`는 facade 수준에서 libjpeg의 `jpeg_progress_mgr` counter에
@@ -955,6 +958,8 @@ Progressive header는 `ReadHeader`와 `DecodeRasterConfig`로 조회할 수 있�
 | `--color-transform subtract-green` | `libjpeg.WithColorTransform(libjpeg.ColorTransformSubtractGreen)` |
 | `--input-colorspace ycbcr` | `libjpeg.WithInputColorSpace(libjpeg.InputYCbCr)` |
 | `--input-colorspace grayscale` | `libjpeg.WithInputColorSpace(libjpeg.InputGray)` |
+| `--input-colorspace big-gamut-rgb` | `libjpeg.WithInputColorSpace(libjpeg.InputBigGamutRGB)` |
+| `--input-colorspace big-gamut-ycbcr` | `libjpeg.WithInputColorSpace(libjpeg.InputBigGamutYCbCr)` |
 
 `--ppm`, `--bmp`, `--targa`, `--rle`, `--gif` 같은 CLI output flag는 아직 public
 decode facade에 포함하지 않았습니다. 라이브러리에서는 `DecodeRaster`로 픽셀을

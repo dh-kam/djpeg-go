@@ -136,6 +136,8 @@ const (
 	InputYCbCr
 	InputCMYK
 	InputYCCK
+	InputBigGamutRGB
+	InputBigGamutYCbCr
 )
 
 // DitherMode selects palette dithering for quantized output.
@@ -391,6 +393,10 @@ func ParseInputColorSpace(s string) (InputColorSpace, error) {
 		return InputCMYK, nil
 	case "ycck":
 		return InputYCCK, nil
+	case "bgrgb", "bg-rgb", "big-gamut-rgb":
+		return InputBigGamutRGB, nil
+	case "bgycc", "bg-ycc", "bgycbcr", "bg-ycbcr", "big-gamut-ycc", "big-gamut-ycbcr":
+		return InputBigGamutYCbCr, nil
 	default:
 		return InputAuto, fmt.Errorf("%w: unknown input color space %q", ErrInvalidOption, s)
 	}
@@ -518,6 +524,8 @@ func ParseOutputColorSpace(s string) (ColorSpace, error) {
 		return ColorSpaceCMYK, nil
 	case "ycck":
 		return ColorSpaceYCCK, nil
+	case "bgrgb", "bg-rgb", "big-gamut-rgb":
+		return ColorSpaceBigGamutRGB, nil
 	default:
 		return ColorSpaceUnknown, fmt.Errorf("%w: unknown output color space %q", ErrInvalidOption, s)
 	}
@@ -552,6 +560,8 @@ func (c ColorSpace) outputDecoderName() (string, error) {
 		return "cmyk", nil
 	case ColorSpaceYCCK:
 		return "ycck", nil
+	case ColorSpaceBigGamutRGB:
+		return "big-gamut-rgb", nil
 	default:
 		return "", fmt.Errorf("%w: output color space %s is not supported", ErrUnsupported, c)
 	}
@@ -711,6 +721,10 @@ func (s InputColorSpace) decoderName() (string, error) {
 		return "cmyk", nil
 	case InputYCCK:
 		return "ycck", nil
+	case InputBigGamutRGB:
+		return "big-gamut-rgb", nil
+	case InputBigGamutYCbCr:
+		return "big-gamut-ycbcr", nil
 	default:
 		return "", fmt.Errorf("%w: unknown input color space %d", ErrInvalidOption, s)
 	}

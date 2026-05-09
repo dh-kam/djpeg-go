@@ -1575,6 +1575,9 @@ func (d *Decoder) applyOutputColorSpaceToConfig(cfg *Config) error {
 	case ColorSpaceYCCK:
 		cfg.PixelFormat = PixelFormatYCCK32
 		cfg.ColorSpace = ColorSpaceYCCK
+	case ColorSpaceBigGamutRGB:
+		cfg.PixelFormat = PixelFormatRGB24
+		cfg.ColorSpace = ColorSpaceBigGamutRGB
 	default:
 		return fmt.Errorf("%w: output color space %s is not supported", ErrUnsupported, d.opts.OutputColorSpace)
 	}
