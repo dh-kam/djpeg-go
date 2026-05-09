@@ -203,6 +203,12 @@ RGB GIF output은 최대 256색 quantization을 자동으로 활성화합니다.
 ./dist/djpeg-linux-amd64-debug --gif --outfile output.gif input.jpg
 ```
 
+upstream 호환 uncompressed GIF 출력:
+
+```bash
+./dist/djpeg-linux-amd64-debug --gif0 --outfile output.gif input.jpg
+```
+
 ## Poppler/ImageMagick 호환 4:2:0 출력
 
 일부 PDF image stream은 IJG 9f chroma IDCT scaling 대신 libjpeg-turbo 방식의

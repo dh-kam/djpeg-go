@@ -203,6 +203,12 @@ RGB GIF output automatically enables quantization to at most 256 colors:
 ./dist/djpeg-linux-amd64-debug --gif --outfile output.gif input.jpg
 ```
 
+Use upstream-compatible uncompressed GIF output:
+
+```bash
+./dist/djpeg-linux-amd64-debug --gif0 --outfile output.gif input.jpg
+```
+
 ## Poppler/ImageMagick-Compatible 4:2:0 Output
 
 Some PDF image streams match Poppler/ImageMagick output when libjpeg-turbo-style

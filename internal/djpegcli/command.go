@@ -49,6 +49,7 @@ type Options struct {
 	FmtPNM   bool `flag:"pnm" usage:"Output PPM/PGM format"`
 	FmtBMP   bool `flag:"bmp" usage:"Output BMP format"`
 	FmtGIF   bool `flag:"gif" usage:"Output GIF format"`
+	FmtGIF0  bool `flag:"gif0" usage:"Output uncompressed GIF format"`
 	FmtTarga bool `flag:"targa" usage:"Output Targa format"`
 	FmtRLE   bool `flag:"rle" usage:"Output RLE format"`
 
@@ -89,6 +90,7 @@ func NewRootCommand() *cobra.Command {
 		Bool("pnm", false, "Output PPM/PGM format").
 		Bool("bmp", false, "Output BMP format").
 		Bool("gif", false, "Output GIF format").
+		Bool("gif0", false, "Output uncompressed GIF format").
 		Bool("targa", false, "Output Targa format").
 		Bool("rle", false, "Output RLE format")
 
@@ -114,6 +116,9 @@ func NewRootCommand() *cobra.Command {
 			}
 			if opts.FmtGIF {
 				opts.Format = output.FormatGIF
+			}
+			if opts.FmtGIF0 {
+				opts.Format = output.FormatGIF0
 			}
 			if opts.FmtTarga {
 				opts.Format = output.FormatTarga
@@ -378,7 +383,7 @@ func prepareQuantization(opts *Options, info *output.ImageInfo, colormap *output
 
 	desiredColors := opts.NumColors
 	quantize := desiredColors > 0 || colormap != nil
-	if opts.Format == output.FormatGIF && info.ColorSpace == output.ColorSpaceRGB {
+	if (opts.Format == output.FormatGIF || opts.Format == output.FormatGIF0) && info.ColorSpace == output.ColorSpaceRGB {
 		quantize = true
 		if desiredColors == 0 && colormap == nil {
 			desiredColors = 256

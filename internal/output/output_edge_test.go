@@ -7,7 +7,7 @@ import (
 
 // TestNewWriterAllFormats tests creating writers for all supported formats.
 func TestNewWriterAllFormats(t *testing.T) {
-	formats := []Format{FormatPPM, FormatBMP, FormatGIF, FormatTarga, FormatRLE}
+	formats := []Format{FormatPPM, FormatBMP, FormatGIF, FormatGIF0, FormatTarga, FormatRLE}
 	for _, f := range formats {
 		w, err := NewWriter(f)
 		if err != nil {
@@ -422,9 +422,9 @@ func TestPPMWriterRGBColormap(t *testing.T) {
 
 	cm := &Colormap{
 		Maps: [][]uint8{
-			{255, 0},    // R
-			{0, 255},    // G
-			{0, 0},      // B
+			{255, 0}, // R
+			{0, 255}, // G
+			{0, 0},   // B
 		},
 		NumColors: 2,
 	}

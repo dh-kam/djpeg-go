@@ -967,9 +967,9 @@ Progressive header는 `ReadHeader`와 `DecodeRasterConfig`로 조회할 수 있�
 | `--input-colorspace big-gamut-rgb` | `libjpeg.WithInputColorSpace(libjpeg.InputBigGamutRGB)` |
 | `--input-colorspace big-gamut-ycbcr` | `libjpeg.WithInputColorSpace(libjpeg.InputBigGamutYCbCr)` |
 
-`--ppm`, `--bmp`, `--targa`, `--rle`, `--gif` 같은 CLI output flag는 아직 public
-decode facade에 포함하지 않았습니다. 라이브러리에서는 `DecodeRaster`로 픽셀을
-얻은 뒤 application code에서 원하는 output format으로 쓰세요.
+`--ppm`, `--bmp`, `--targa`, `--rle`, `--gif`, `--gif0` 같은 CLI output flag는
+아직 public decode facade에 포함하지 않았습니다. 라이브러리에서는 `DecodeRaster`로
+픽셀을 얻은 뒤 application code에서 원하는 output format으로 쓰세요.
 
 `cmd/djpeg` output writer는 현재 Gray8과 RGB24 raster를 받습니다. 다른
 `--output-colorspace` 값은 parity/debug 및 library API coverage를 위해 노출되어

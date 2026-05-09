@@ -5,7 +5,8 @@ import (
 	"io"
 )
 
-// gifWriter writes GIF89a format with LZW compression.
+// gifWriter writes GIF87a format with LZW compression, or with IJG's gif0
+// pseudo-compression when uncompressed is set.
 //
 // GIF requires color quantization to at most 256 colors. If the image
 // has more than 256 colors and no quantization is applied, the writer
@@ -23,8 +24,9 @@ const (
 type codeInt = int32 // must hold -1 .. 4096
 
 type gifWriter struct {
-	w    io.Writer
-	info *ImageInfo
+	w            io.Writer
+	info         *ImageInfo
+	uncompressed bool
 
 	// LZW compression state
 	nBits    int
@@ -39,6 +41,7 @@ type gifWriter struct {
 	clearCode codeInt
 	eofCode   codeInt
 	freeCode  codeInt
+	codeCount codeInt
 
 	// Hash table for LZW
 	hashCode  []codeInt
@@ -76,9 +79,10 @@ func (g *gifWriter) Start(w io.Writer, info *ImageInfo) error {
 	}
 	g.rowIdx = 0
 
-	// Allocate LZW hash table
-	g.hashCode = make([]codeInt, hashSize)
-	g.hashValue = make([]int32, hashSize)
+	if !g.uncompressed {
+		g.hashCode = make([]codeInt, hashSize)
+		g.hashValue = make([]int32, hashSize)
+	}
 
 	return nil
 }
@@ -121,10 +125,10 @@ func (g *gifWriter) Finish() error {
 	// Logical Screen Descriptor
 	writeLE16(g.w, uint16(g.info.Width))
 	writeLE16(g.w, uint16(g.info.Height))
-	flagByte := byte(0x80) // global color table present
+	flagByte := byte(0x80)                    // global color table present
 	flagByte |= byte((bitsPerPixel - 1) << 4) // color resolution
-	flagByte |= byte(bitsPerPixel - 1)         // size of global color table
-	g.w.Write([]byte{flagByte, 0, 0})          // flag, bg color, aspect ratio
+	flagByte |= byte(bitsPerPixel - 1)        // size of global color table
+	g.w.Write([]byte{flagByte, 0, 0})         // flag, bg color, aspect ratio
 
 	// Global Color Table
 	for i := 0; i < colorMapSize; i++ {
@@ -153,12 +157,12 @@ func (g *gifWriter) Finish() error {
 	}
 
 	// Image Descriptor
-	g.w.Write([]byte{','})       // separator
-	writeLE16(g.w, 0)            // left
-	writeLE16(g.w, 0)            // top
+	g.w.Write([]byte{','}) // separator
+	writeLE16(g.w, 0)      // left
+	writeLE16(g.w, 0)      // top
 	writeLE16(g.w, uint16(g.info.Width))
 	writeLE16(g.w, uint16(g.info.Height))
-	g.w.Write([]byte{0x00})      // not interlaced, no local color map
+	g.w.Write([]byte{0x00}) // not interlaced, no local color map
 
 	// Initial code size byte
 	g.w.Write([]byte{byte(initCodeSize)})
@@ -167,7 +171,11 @@ func (g *gifWriter) Finish() error {
 	g.compressInit(initCodeSize + 1)
 	for row := 0; row < g.info.Height; row++ {
 		for col := 0; col < g.info.Width; col++ {
-			g.compressByte(g.rows[row][col])
+			if g.uncompressed {
+				g.writeUncompressedByte(g.rows[row][col])
+			} else {
+				g.compressByte(g.rows[row][col])
+			}
 		}
 	}
 	g.compressTerm()
@@ -192,6 +200,7 @@ func (g *gifWriter) compressInit(iBits int) {
 	g.clearCode = codeInt(1 << (iBits - 1))
 	g.eofCode = g.clearCode + 1
 	g.freeCode = g.clearCode + 2
+	g.codeCount = g.freeCode
 	g.firstByte = true
 	g.bytesInPkt = 0
 	g.curAccum = 0
@@ -272,6 +281,18 @@ func (g *gifWriter) compressByte(c byte) {
 	}
 }
 
+// writeUncompressedByte emits one pixel value as its own GIF code. This mirrors
+// IJG's -gif0 path, which inserts clear codes before the decoder widens codes.
+func (g *gifWriter) writeUncompressedByte(c byte) {
+	g.output(codeInt(c))
+	if g.codeCount < g.maxcode {
+		g.codeCount++
+		return
+	}
+	g.output(g.clearCode)
+	g.codeCount = g.clearCode + 2
+}
+
 // compressTerm flushes remaining LZW state.
 func (g *gifWriter) compressTerm() {
 	if !g.firstByte {
@@ -290,6 +311,7 @@ func (g *gifWriter) clearBlock() {
 		g.hashCode[i] = 0
 	}
 	g.freeCode = g.clearCode + 2
+	g.codeCount = g.freeCode
 	g.output(g.clearCode)
 	g.nBits = g.initBits
 	g.maxcode = (1 << g.nBits) - 1

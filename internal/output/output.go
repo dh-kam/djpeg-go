@@ -23,24 +23,24 @@ const (
 // Each entry in Maps is a slice of N uint8 values, one per channel.
 // Maps has length 1 for grayscale or 3 for RGB.
 type Colormap struct {
-	Maps     [][]uint8
+	Maps      [][]uint8
 	NumColors int
 }
 
 // ImageInfo carries the metadata needed by output writers, mirroring
 // the fields that the C code reads from j_decompress_ptr.
 type ImageInfo struct {
-	Width           int
-	Height          int
-	NumComponents   int        // 1 for grayscale, 3 for RGB
-	ColorSpace      ColorSpace
-	QuantizeColors  bool       // whether color quantization is active
-	DesiredColors   int        // desired number of colors (0 = unlimited)
-	Colormap        *Colormap  // colormap if QuantizeColors is true
-	XDensity        int        // pixels per unit (used by BMP)
-	YDensity        int
-	DensityUnit     int        // 1=dpi, 2=dpcm
-	DataPrecision   int        // bits per sample (8 or 12)
+	Width          int
+	Height         int
+	NumComponents  int // 1 for grayscale, 3 for RGB
+	ColorSpace     ColorSpace
+	QuantizeColors bool      // whether color quantization is active
+	DesiredColors  int       // desired number of colors (0 = unlimited)
+	Colormap       *Colormap // colormap if QuantizeColors is true
+	XDensity       int       // pixels per unit (used by BMP)
+	YDensity       int
+	DensityUnit    int // 1=dpi, 2=dpcm
+	DataPrecision  int // bits per sample (8 or 12)
 }
 
 // Writer is the interface that all output format writers must implement.
@@ -68,6 +68,7 @@ const (
 	FormatPPM   Format = "ppm"
 	FormatBMP   Format = "bmp"
 	FormatGIF   Format = "gif"
+	FormatGIF0  Format = "gif0"
 	FormatTarga Format = "targa"
 	FormatRLE   Format = "rle"
 )
@@ -81,6 +82,8 @@ func NewWriter(f Format) (Writer, error) {
 		return &bmpWriter{}, nil
 	case FormatGIF:
 		return &gifWriter{}, nil
+	case FormatGIF0:
+		return &gifWriter{uncompressed: true}, nil
 	case FormatTarga:
 		return &targaWriter{}, nil
 	case FormatRLE:

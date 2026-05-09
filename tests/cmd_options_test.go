@@ -3,6 +3,7 @@ package djpeggo_test
 import (
 	"bytes"
 	"errors"
+	"image/gif"
 	"os"
 	"testing"
 
@@ -341,6 +342,29 @@ func TestGIFOutputAutoQuantizesRGB(t *testing.T) {
 	})
 	if len(gifData) < 6 || string(gifData[:6]) != "GIF87a" {
 		t.Fatalf("GIF header = %q, want GIF87a", gifData[:min(len(gifData), 6)])
+	}
+}
+
+func TestGIF0OutputAutoQuantizesRGB(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile("testdata/test_420.jpg")
+	if err != nil {
+		t.Skip("test_420.jpg not available:", err)
+	}
+
+	gifData := decompressForOptionTest(t, data, &djpegcli.Options{
+		Format: output.FormatGIF0,
+	})
+	cfg, err := gif.DecodeConfig(bytes.NewReader(gifData))
+	if err != nil {
+		t.Fatalf("decoding GIF0 output: %v", err)
+	}
+	if cfg.Width != 256 || cfg.Height != 256 {
+		t.Fatalf("GIF0 dimensions = %dx%d, want 256x256", cfg.Width, cfg.Height)
+	}
+	if len(gifData) < 6 || string(gifData[:6]) != "GIF87a" {
+		t.Fatalf("GIF0 header = %q, want GIF87a", gifData[:min(len(gifData), 6)])
 	}
 }
 

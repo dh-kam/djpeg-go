@@ -12,6 +12,7 @@ func TestNewWriter(t *testing.T) {
 		FormatPPM,
 		FormatBMP,
 		FormatGIF,
+		FormatGIF0,
 		FormatTarga,
 		FormatRLE,
 	}
@@ -75,9 +76,9 @@ func TestColormapStruct(t *testing.T) {
 
 	cm := &Colormap{
 		Maps: [][]uint8{
-			{255, 0, 0},   // R
-			{0, 255, 0},   // G
-			{0, 0, 255},   // B
+			{255, 0, 0}, // R
+			{0, 255, 0}, // G
+			{0, 0, 255}, // B
 		},
 		NumColors: 3,
 	}
