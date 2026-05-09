@@ -419,6 +419,55 @@ func (dec *Decoder) ReadScanlines(scanlines [][]uint8) (int, error) {
 	return rowsRead, nil
 }
 
+// SkipScanlines skips output scanlines by decoding them into a discard buffer.
+func (dec *Decoder) SkipScanlines(numLines int) (int, error) {
+	if numLines < 0 {
+		return 0, errors.New("jpeg: negative scanline count")
+	}
+	if dec.d.GlobalState != marker.DStateScanning {
+		return 0, marker.ErrBadState
+	}
+	remaining := dec.d.OutputHeight - dec.d.OutputScanline
+	if numLines > remaining {
+		numLines = remaining
+	}
+	if numLines == 0 {
+		return 0, nil
+	}
+	stride := dec.d.OutputWidth * dec.d.OutputComponents
+	if stride <= 0 {
+		return 0, nil
+	}
+
+	const maxBatchRows = 16
+	batchRows := numLines
+	if batchRows > maxBatchRows {
+		batchRows = maxBatchRows
+	}
+	buf := make([]byte, batchRows*stride)
+	rows := make([][]byte, batchRows)
+	for i := range rows {
+		rows[i] = buf[i*stride : (i+1)*stride]
+	}
+
+	skipped := 0
+	for skipped < numLines {
+		want := numLines - skipped
+		if want > batchRows {
+			want = batchRows
+		}
+		n, err := dec.ReadScanlines(rows[:want])
+		skipped += n
+		if err != nil {
+			return skipped, err
+		}
+		if n == 0 {
+			break
+		}
+	}
+	return skipped, nil
+}
+
 func (dec *Decoder) FinishDecompress() error {
 	err := dec.d.FinishDecompress()
 	if err != nil {

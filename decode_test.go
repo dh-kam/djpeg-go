@@ -842,6 +842,95 @@ func TestLibjpegNamedScanlineMethods(t *testing.T) {
 	}
 }
 
+func TestDecoderSkipScanlines(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	full, err := djpeg.DecodeRaster(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeRaster reference failed: %v", err)
+	}
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress failed: %v", err)
+	}
+
+	if _, err := dec.SkipScanlines(-1); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("SkipScanlines negative error = %v, want ErrInvalidOption", err)
+	}
+	skipped, err := dec.SkipScanlines(3)
+	if err != nil {
+		t.Fatalf("SkipScanlines failed: %v", err)
+	}
+	if skipped != 3 || dec.OutputScanline() != 3 {
+		t.Fatalf("SkipScanlines skipped=%d output_scanline=%d, want 3", skipped, dec.OutputScanline())
+	}
+
+	row := make([]byte, dec.OutputConfig().Stride)
+	n, err := dec.ReadScanlines([][]byte{row})
+	if err != nil {
+		t.Fatalf("ReadScanlines after skip failed: %v", err)
+	}
+	wantRow := full.Pix[3*full.Stride : 4*full.Stride]
+	if n != 1 || !bytes.Equal(row, wantRow) {
+		t.Fatalf("row after skip read=%d equal=%v, want row 3", n, bytes.Equal(row, wantRow))
+	}
+
+	skipped, err = dec.SkipScanlines(100)
+	if err != nil {
+		t.Fatalf("SkipScanlines past end failed: %v", err)
+	}
+	if skipped != 4 || dec.OutputScanline() != full.Rect.Dy() {
+		t.Fatalf("final skip skipped=%d output_scanline=%d, want 4/%d",
+			skipped, dec.OutputScanline(), full.Rect.Dy())
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress failed: %v", err)
+	}
+}
+
+func TestDecoderSkipScanlinesWithScale(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data), djpeg.WithScale(1, 2))
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader WithScale failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress WithScale failed: %v", err)
+	}
+	out := dec.OutputConfig()
+	if out.Height != 4 {
+		t.Fatalf("scaled height = %d, want 4", out.Height)
+	}
+	skipped, err := dec.SkipScanlines(2)
+	if err != nil {
+		t.Fatalf("scaled SkipScanlines failed: %v", err)
+	}
+	if skipped != 2 || dec.OutputScanline() != 2 {
+		t.Fatalf("scaled skip skipped=%d output_scanline=%d, want 2", skipped, dec.OutputScanline())
+	}
+	skipped, err = dec.SkipScanlines(10)
+	if err != nil {
+		t.Fatalf("scaled SkipScanlines past end failed: %v", err)
+	}
+	if skipped != 2 || dec.OutputScanline() != out.Height {
+		t.Fatalf("scaled final skip skipped=%d output_scanline=%d, want 2/%d",
+			skipped, dec.OutputScanline(), out.Height)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress WithScale failed: %v", err)
+	}
+}
+
 func TestParseCompatibilityMode(t *testing.T) {
 	tests := []struct {
 		input string

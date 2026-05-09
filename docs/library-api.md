@@ -448,7 +448,10 @@ if err := dec.Start(); err != nil {
 
 out := dec.OutputConfig()
 row := make([]byte, out.Stride)
-for y := 0; y < out.Height; y++ {
+if _, err := dec.SkipScanlines(10); err != nil {
+	return err
+}
+for dec.OutputScanline() < out.Height {
 	n, err := dec.ReadScanlines([][]byte{row})
 	if err != nil {
 		return err
@@ -463,6 +466,10 @@ if err := dec.Finish(); err != nil {
 	return err
 }
 ```
+
+`SkipScanlines` mirrors libjpeg's `jpeg_skip_scanlines()`: it advances the
+output scanline cursor, stops at the bottom of the image, and returns the
+number of rows actually skipped.
 
 Read all expected output rows before calling `Finish`. Stopping early can
 surface a "too little data" decompressor error because the decoder expects the

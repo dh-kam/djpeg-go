@@ -245,6 +245,29 @@ func (d *Decoder) ReadScanlines(rows [][]byte) (int, error) {
 	return n, nil
 }
 
+// SkipScanlines skips output scanlines using libjpeg-style naming.
+func (d *Decoder) SkipScanlines(numLines int) (int, error) {
+	if numLines < 0 {
+		return 0, fmt.Errorf("%w: scanline count must be non-negative", ErrInvalidOption)
+	}
+	if numLines == 0 {
+		return 0, nil
+	}
+	if d.scaled != nil {
+		remaining := d.scaled.Rect.Dy() - d.scaledNextRow
+		if numLines > remaining {
+			numLines = remaining
+		}
+		d.scaledNextRow += numLines
+		return numLines, nil
+	}
+	n, err := d.dec.SkipScanlines(numLines)
+	if err != nil {
+		return n, wrapDecodeError("skip scanlines", err)
+	}
+	return n, nil
+}
+
 // Finish completes decompression.
 func (d *Decoder) Finish() error {
 	if d.internalDone {

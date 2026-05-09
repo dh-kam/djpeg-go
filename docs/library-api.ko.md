@@ -444,7 +444,10 @@ if err := dec.Start(); err != nil {
 
 out := dec.OutputConfig()
 row := make([]byte, out.Stride)
-for y := 0; y < out.Height; y++ {
+if _, err := dec.SkipScanlines(10); err != nil {
+	return err
+}
+for dec.OutputScanline() < out.Height {
 	n, err := dec.ReadScanlines([][]byte{row})
 	if err != nil {
 		return err
@@ -459,6 +462,10 @@ if err := dec.Finish(); err != nil {
 	return err
 }
 ```
+
+`SkipScanlines`는 libjpeg의 `jpeg_skip_scanlines()`에 대응합니다. output
+scanline cursor를 전진시키고, 이미지 하단에서 멈추며, 실제로 skip한 row 수를
+반환합니다.
 
 `Finish`를 호출하기 전에 예상 output row를 모두 읽으세요. 중간에 멈추면 decoder가
 전체 이미지를 소비하지 않았다고 보고 "too little data" 오류를 반환할 수
