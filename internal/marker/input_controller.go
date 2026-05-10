@@ -349,8 +349,8 @@ func startInputPass(d *Decompressor) error {
 	if err := latchQuantTables(d); err != nil {
 		return err
 	}
-	// In the full decompressor, entropy and coef start_pass would be called here.
-	// For now, just switch consume_input to consume_data (which is not yet implemented).
+	// Entropy and coefficient pass setup is connected by internal/decoder,
+	// which owns scan data buffering and output construction.
 	return nil
 }
 

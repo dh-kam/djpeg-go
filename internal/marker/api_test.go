@@ -300,15 +300,14 @@ func TestDecompressorReadScanlines(t *testing.T) {
 		t.Fatalf("StartDecompress error: %v", err)
 	}
 
-	// ReadScanlines should return 0 (pipeline not yet connected)
 	scanlines := make([][]uint8, 1)
 	scanlines[0] = make([]uint8, d.OutputWidth)
 	n, err := d.ReadScanlines(scanlines)
-	if err != nil {
-		t.Fatalf("ReadScanlines error: %v", err)
+	if err != ErrNotImpl {
+		t.Fatalf("ReadScanlines error = %v, want ErrNotImpl", err)
 	}
 	if n != 0 {
-		t.Errorf("ReadScanlines returned %d, want 0 (pipeline not connected)", n)
+		t.Errorf("ReadScanlines returned %d, want 0", n)
 	}
 }
 
