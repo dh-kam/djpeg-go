@@ -903,6 +903,66 @@ func TestDecoderMarkerProcessorOption(t *testing.T) {
 	}
 }
 
+func TestDecoderMarkerHandlingLastOptionWins(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+	payload := []byte("saved-after-processor")
+	data = insertHeaderMarker(data, djpeg.MarkerAPP2, payload)
+
+	var calls int
+	dec := djpeg.NewDecoder(
+		bytes.NewReader(data),
+		djpeg.WithMarkerProcessor(djpeg.MarkerAPP2, func(marker djpeg.Marker) error {
+			calls++
+			return nil
+		}),
+		djpeg.WithSavedMarkers(djpeg.MarkerAPP2, 65533),
+	)
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("processor calls = %d, want 0 because later WithSavedMarkers should override it", calls)
+	}
+	markers := dec.Markers()
+	if len(markers) != 1 || markers[0].Code != djpeg.MarkerAPP2 || !bytes.Equal(markers[0].Data, payload) {
+		t.Fatalf("markers = %+v, want saved APP2 payload %q", markers, payload)
+	}
+}
+
+func TestDecoderMarkerHandlingLastMethodWins(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+	payload := []byte("method-order")
+	data = insertHeaderMarker(data, djpeg.MarkerAPP3, payload)
+
+	var calls int
+	dec := djpeg.NewDecoder(bytes.NewReader(data))
+	if err := dec.SetMarkerProcessor(djpeg.MarkerAPP3, func(marker djpeg.Marker) error {
+		calls++
+		return nil
+	}); err != nil {
+		t.Fatalf("SetMarkerProcessor failed: %v", err)
+	}
+	if err := dec.SaveMarkers(djpeg.MarkerAPP3, 65533); err != nil {
+		t.Fatalf("SaveMarkers failed: %v", err)
+	}
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("processor calls = %d, want 0 because later SaveMarkers should override it", calls)
+	}
+	markers := dec.Markers()
+	if len(markers) != 1 || markers[0].Code != djpeg.MarkerAPP3 || !bytes.Equal(markers[0].Data, payload) {
+		t.Fatalf("markers = %+v, want saved APP3 payload %q", markers, payload)
+	}
+}
+
 func TestDecoderMarkerProcessorError(t *testing.T) {
 	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
 	if err != nil {

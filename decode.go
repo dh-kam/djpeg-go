@@ -1303,6 +1303,10 @@ func (d *Decoder) SaveMarkers(markerCode int, lengthLimit uint) error {
 		return fmt.Errorf("%w: %v", ErrInvalidOption, err)
 	}
 	d.opts.SavedMarkers = append(d.opts.SavedMarkers, option)
+	d.opts.markerHandlers = append(d.opts.markerHandlers, markerHandlerOption{
+		kind:  markerHandlerSave,
+		saved: option,
+	})
 	return nil
 }
 
@@ -1315,6 +1319,10 @@ func (d *Decoder) SetMarkerProcessor(markerCode int, processor MarkerProcessor) 
 		return err
 	}
 	d.opts.MarkerProcessors = append(d.opts.MarkerProcessors, option)
+	d.opts.markerHandlers = append(d.opts.markerHandlers, markerHandlerOption{
+		kind:      markerHandlerProcessor,
+		processor: option,
+	})
 	return nil
 }
 
@@ -1544,17 +1552,29 @@ func (d *Decoder) applyOptions() error {
 	if err := d.validateRawDataOptions(); err != nil {
 		return err
 	}
-	for _, saved := range d.opts.SavedMarkers {
-		if !validSavedMarkerCode(saved.Code) {
-			return fmt.Errorf("%w: marker code 0x%02x cannot be saved", ErrInvalidOption, saved.Code)
+	if len(d.opts.markerHandlers) > 0 {
+		for _, handler := range d.opts.markerHandlers {
+			switch handler.kind {
+			case markerHandlerSave:
+				if err := d.applySaveMarkers(handler.saved); err != nil {
+					return err
+				}
+			case markerHandlerProcessor:
+				if err := d.applyMarkerProcessor(handler.processor); err != nil {
+					return err
+				}
+			}
 		}
-		if err := d.dec.SaveMarkers(saved.Code, saved.LengthLimit); err != nil {
-			return fmt.Errorf("%w: %v", ErrInvalidOption, err)
+	} else {
+		for _, saved := range d.opts.SavedMarkers {
+			if err := d.applySaveMarkers(saved); err != nil {
+				return err
+			}
 		}
-	}
-	for _, processor := range d.opts.MarkerProcessors {
-		if err := d.applyMarkerProcessor(processor); err != nil {
-			return err
+		for _, processor := range d.opts.MarkerProcessors {
+			if err := d.applyMarkerProcessor(processor); err != nil {
+				return err
+			}
 		}
 	}
 	idct, err := d.opts.IDCT.decoderName()
@@ -1624,6 +1644,16 @@ func (d *Decoder) applyDecompressionParameters() error {
 	}
 	if explicit {
 		d.dec.SetBlockSmoothing(blockSmoothing)
+	}
+	return nil
+}
+
+func (d *Decoder) applySaveMarkers(option SavedMarkerOption) error {
+	if !validSavedMarkerCode(option.Code) {
+		return fmt.Errorf("%w: marker code 0x%02x cannot be saved", ErrInvalidOption, option.Code)
+	}
+	if err := d.dec.SaveMarkers(option.Code, option.LengthLimit); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidOption, err)
 	}
 	return nil
 }

@@ -37,6 +37,7 @@ type Options struct {
 	ScaleDenominator  int
 	SavedMarkers      []SavedMarkerOption
 	MarkerProcessors  []MarkerProcessorOption
+	markerHandlers    []markerHandlerOption
 	QuantizeColors    bool
 	DesiredNumColors  int
 	DitherMode        DitherMode
@@ -60,6 +61,19 @@ type SavedMarkerOption struct {
 type MarkerProcessorOption struct {
 	Code      int
 	Processor MarkerProcessor
+}
+
+type markerHandlerKind int
+
+const (
+	markerHandlerSave markerHandlerKind = iota
+	markerHandlerProcessor
+)
+
+type markerHandlerOption struct {
+	kind      markerHandlerKind
+	saved     SavedMarkerOption
+	processor MarkerProcessorOption
 }
 
 // Progress mirrors libjpeg's jpeg_progress_mgr public counters.
@@ -288,9 +302,14 @@ func WithScale(numerator, denominator int) Option {
 // internal processing.
 func WithSavedMarkers(markerCode int, lengthLimit uint) Option {
 	return func(opts *Options) {
-		opts.SavedMarkers = append(opts.SavedMarkers, SavedMarkerOption{
+		option := SavedMarkerOption{
 			Code:        markerCode,
 			LengthLimit: lengthLimit,
+		}
+		opts.SavedMarkers = append(opts.SavedMarkers, option)
+		opts.markerHandlers = append(opts.markerHandlers, markerHandlerOption{
+			kind:  markerHandlerSave,
+			saved: option,
 		})
 	}
 }
@@ -381,13 +400,18 @@ func WithProgressMonitor(monitor ProgressMonitor) Option {
 
 // WithMarkerProcessor mirrors libjpeg's jpeg_set_marker_processor API for COM
 // and APPn markers. The processor must be installed before ReadHeader. If a
-// processor is configured for the same marker as WithSavedMarkers, the
-// processor takes precedence.
+// processor is configured for the same marker as WithSavedMarkers, the later
+// option for that marker takes precedence.
 func WithMarkerProcessor(markerCode int, processor MarkerProcessor) Option {
 	return func(opts *Options) {
-		opts.MarkerProcessors = append(opts.MarkerProcessors, MarkerProcessorOption{
+		option := MarkerProcessorOption{
 			Code:      markerCode,
 			Processor: processor,
+		}
+		opts.MarkerProcessors = append(opts.MarkerProcessors, option)
+		opts.markerHandlers = append(opts.markerHandlers, markerHandlerOption{
+			kind:      markerHandlerProcessor,
+			processor: option,
 		})
 	}
 }
