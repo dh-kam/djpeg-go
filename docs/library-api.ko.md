@@ -270,13 +270,12 @@ decoder는 raster와 raw component output 모두에서 libjpeg 스타일 scaled-
 output 경로를 사용합니다.
 
 `WithOutputGamma`와 `WithBlockSmoothing`은 libjpeg decompressor parameter에
-대응합니다. Progressive Huffman scanline 및 raw component output은 pure Go decoder
+대응합니다. Progressive Huffman 및 arithmetic scanline output은 pure Go decoder
 경로를 사용하며, non-seekable reader를 쓰는 low-level `Decoder` 경로도 포함합니다.
-Scaled 및 quantized progressive raster output도 같은 public facade에서 사용할 수
-있습니다. Progressive Huffman coefficient output은 `DecodeCoefficients`와
-`ReadCoefficients`로 지원하고, progressive arithmetic coefficient output은 아직
-`ErrUnsupported`로 보고합니다. one-shot API는 필요 시 non-seekable reader를
-buffering합니다.
+Progressive raw component output, scaled raster output, quantized raster
+output도 같은 public facade에서 사용할 수 있습니다. Progressive Huffman 및
+arithmetic coefficient output은 `DecodeCoefficients`와 `ReadCoefficients`로
+지원합니다. one-shot API는 필요 시 non-seekable reader를 buffering합니다.
 
 ## Buffered-Image Output Pass
 
@@ -416,9 +415,8 @@ if err != nil {
 _ = components
 ```
 
-Progressive Huffman coefficient decoding은 지원합니다. Progressive arithmetic
-coefficient decoding은 아직 `ErrUnsupported`로 보고됩니다. Sequential
-arithmetic-coded coefficient decoding은 지원합니다.
+Progressive Huffman 및 arithmetic coefficient decoding을 지원합니다.
+Sequential arithmetic-coded coefficient decoding도 지원합니다.
 
 ## Raw Component Output
 
@@ -959,11 +957,10 @@ if err != nil {
 _ = img
 ```
 
-현재 progressive arithmetic coefficient decoding은 지원하지 않습니다.
 Progressive header는 `ReadHeader`와 `DecodeRasterConfig`로 조회할 수 있으며,
-progressive scanline과 raw component output은 one-shot API와 seek 가능한
-low-level decoder input에서 사용할 수 있습니다. Progressive Huffman coefficient는
-`DecodeCoefficients`와 `ReadCoefficients`로 사용할 수 있습니다.
+progressive scanline, raw component output, progressive coefficient는 one-shot
+API와 low-level decoder input에서 사용할 수 있습니다. Coefficient 접근에는
+`DecodeCoefficients` 또는 `ReadCoefficients`를 사용합니다.
 
 ## CLI Flag와 API Option 대응
 
@@ -1023,10 +1020,8 @@ import libjpeg "github.com/dh-kam/djpeg-go"
 
 - baseline 및 extended sequential non-progressive JPEG가 지원 경로이며,
   Huffman과 arithmetic entropy coding을 지원합니다.
-- progressive JPEG scanline과 raw component output은 one-shot API와 seek 가능한
-  low-level decoder input에서 decode할 수 있습니다. Progressive Huffman
-  coefficient decoding은 지원하며, progressive arithmetic coefficient decoding은
-  `ErrUnsupported`를 반환합니다.
+- progressive JPEG scanline, raw component output, coefficient는 one-shot API와
+  low-level decoder input에서 decode할 수 있으며 non-seekable reader도 포함합니다.
 - `Decode`는 `image.Image` interface 뒤에 `*Raster`를 반환합니다. RGBA allocation을
   강제하지 않으면서 raw byte 접근을 유지하기 위한 선택입니다.
 - package는 `image.RegisterFormat`를 자동 호출하지 않습니다. 이 decoder의 parity

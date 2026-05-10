@@ -14,8 +14,8 @@ performance testing.
 
 - Baseline and extended sequential non-progressive JPEG decoding are the
   primary supported paths, including Huffman and arithmetic entropy coding.
-- Progressive JPEG scanline, raw component, and Huffman coefficient output are
-  supported. Progressive arithmetic coefficient decoding is still rejected.
+- Progressive JPEG scanline, raw component, Huffman coefficient, and arithmetic
+  coefficient output are supported.
 - PPM/PGM output is the most thoroughly verified CLI output path.
 - BMP, Targa, RLE, and limited GIF writer code exists, but exact parity is
   currently measured against PPM/PGM output.

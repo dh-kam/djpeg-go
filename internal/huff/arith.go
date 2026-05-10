@@ -4,9 +4,9 @@ import "errors"
 
 // Arithmetic decoding errors.
 var (
-	ErrArithBadCode    = errors.New("jpeg: bad arithmetic code")
+	ErrArithBadCode     = errors.New("jpeg: bad arithmetic code")
 	ErrArithCantSuspend = errors.New("jpeg: arithmetic decoder cannot suspend")
-	ErrNoArithTable    = errors.New("jpeg: no arithmetic table")
+	ErrNoArithTable     = errors.New("jpeg: no arithmetic table")
 )
 
 // DC and AC statistics bin counts.
@@ -298,6 +298,276 @@ func (d *ArithDecoder) DecodeMCUSequential(
 			}
 			block[NaturalOrder[k]] = JCOEF(v)
 			k++
+		}
+	}
+
+	return true
+}
+
+// DecodeMCUProgressive decodes one MCU's worth of arithmetic-compressed
+// coefficients for a progressive JPEG scan.
+// Ported from decode_mcu_DC_first, decode_mcu_AC_first,
+// decode_mcu_DC_refine, and decode_mcu_AC_refine in jdarith.c.
+func (d *ArithDecoder) DecodeMCUProgressive(
+	blocks []Block,
+	blocksInMCU int,
+	mcuMembership []int,
+	compInfos []ComponentInfo,
+	Ss, Se, Ah, Al int,
+	arithDCL, arithDCU [NumArithTbls]uint8,
+	arithACK [NumArithTbls]int,
+	src func() byte,
+	unreadMarker *byte,
+) bool {
+	switch {
+	case Ss == 0 && Ah == 0:
+		return d.decodeMCUDCFirst(blocks, blocksInMCU, mcuMembership, compInfos, Al, arithDCL, arithDCU, src, unreadMarker)
+	case Ss == 0:
+		return d.decodeMCUDCRefine(blocks, blocksInMCU, Al, src, unreadMarker)
+	case Ah == 0:
+		return d.decodeMCUACFirst(blocks, compInfos, Ss, Se, Al, arithACK, src, unreadMarker)
+	default:
+		return d.decodeMCUACRefine(blocks, compInfos, Ss, Se, Al, src, unreadMarker)
+	}
+}
+
+func (d *ArithDecoder) decodeMCUDCFirst(
+	blocks []Block,
+	blocksInMCU int,
+	mcuMembership []int,
+	compInfos []ComponentInfo,
+	Al int,
+	arithDCL, arithDCU [NumArithTbls]uint8,
+	src func() byte,
+	unreadMarker *byte,
+) bool {
+	entropy := &d.State
+	if entropy.Ct == -1 {
+		return true
+	}
+
+	for blkn := 0; blkn < blocksInMCU; blkn++ {
+		block := &blocks[blkn]
+		ci := mcuMembership[blkn]
+		compptr := compInfos[ci]
+		tbl := compptr.DCTblNo
+		st := entropy.DCStats[tbl][entropy.DCContext[ci]:]
+
+		if d.arithDecode(st, src, unreadMarker) == 0 {
+			entropy.DCContext[ci] = 0
+		} else {
+			sign := d.arithDecode(st[1:], src, unreadMarker)
+			st = st[2:]
+			if sign != 0 {
+				st = st[1:]
+			} else {
+				st = st[:1]
+			}
+
+			m := 0
+			if d.arithDecode(st, src, unreadMarker) != 0 {
+				st = entropy.DCStats[tbl][20:]
+				for d.arithDecode(st, src, unreadMarker) != 0 {
+					m <<= 1
+					if m == 0x8000 {
+						entropy.Ct = -1
+						return true
+					}
+					st = st[1:]
+				}
+			}
+
+			dcL := int(arithDCL[tbl])
+			dcU := int(arithDCU[tbl])
+			if m < (1<<uint(dcL))>>1 {
+				entropy.DCContext[ci] = 0
+			} else if m > (1<<uint(dcU))>>1 {
+				entropy.DCContext[ci] = 12 + (sign * 4)
+			} else {
+				entropy.DCContext[ci] = 4 + (sign * 4)
+			}
+
+			v := m
+			st = st[14:]
+			for m >>= 1; m != 0; m >>= 1 {
+				if d.arithDecode(st, src, unreadMarker) != 0 {
+					v |= m
+				}
+			}
+			v++
+			if sign != 0 {
+				v = -v
+			}
+			entropy.LastDCVal[ci] += v
+		}
+
+		block[0] = JCOEF(entropy.LastDCVal[ci] << uint(Al))
+	}
+
+	return true
+}
+
+func (d *ArithDecoder) decodeMCUACFirst(
+	blocks []Block,
+	compInfos []ComponentInfo,
+	Ss, Se, Al int,
+	arithACK [NumArithTbls]int,
+	src func() byte,
+	unreadMarker *byte,
+) bool {
+	entropy := &d.State
+	if entropy.Ct == -1 {
+		return true
+	}
+	if len(blocks) == 0 || len(compInfos) == 0 {
+		return true
+	}
+
+	block := &blocks[0]
+	tbl := compInfos[0].ACTblNo
+	k := Ss - 1
+	for {
+		st := entropy.ACStats[tbl][3*k:]
+		if d.arithDecode(st, src, unreadMarker) != 0 {
+			break
+		}
+		for {
+			k++
+			if d.arithDecode(st[1:], src, unreadMarker) != 0 {
+				break
+			}
+			st = st[3:]
+			if k >= Se {
+				entropy.Ct = -1
+				return true
+			}
+		}
+
+		sign := d.arithDecode(entropy.FixedBin[:], src, unreadMarker)
+		st = st[2:]
+
+		m := 0
+		if d.arithDecode(st, src, unreadMarker) != 0 {
+			if d.arithDecode(st, src, unreadMarker) != 0 {
+				m <<= 1
+				if k <= arithACK[tbl] {
+					st = entropy.ACStats[tbl][189:]
+				} else {
+					st = entropy.ACStats[tbl][217:]
+				}
+				for d.arithDecode(st, src, unreadMarker) != 0 {
+					m <<= 1
+					if m == 0x8000 {
+						entropy.Ct = -1
+						return true
+					}
+					st = st[1:]
+				}
+			}
+		}
+
+		v := m
+		st = st[14:]
+		for m >>= 1; m != 0; m >>= 1 {
+			if d.arithDecode(st, src, unreadMarker) != 0 {
+				v |= m
+			}
+		}
+		v++
+		if sign != 0 {
+			v = -v
+		}
+		block[NaturalOrder[k]] = JCOEF(v << uint(Al))
+		if k >= Se {
+			break
+		}
+	}
+
+	return true
+}
+
+func (d *ArithDecoder) decodeMCUDCRefine(
+	blocks []Block,
+	blocksInMCU int,
+	Al int,
+	src func() byte,
+	unreadMarker *byte,
+) bool {
+	st := d.State.FixedBin[:]
+	p1 := JCOEF(1 << uint(Al))
+	for blkn := 0; blkn < blocksInMCU; blkn++ {
+		if d.arithDecode(st, src, unreadMarker) != 0 {
+			blocks[blkn][0] |= p1
+		}
+	}
+	return true
+}
+
+func (d *ArithDecoder) decodeMCUACRefine(
+	blocks []Block,
+	compInfos []ComponentInfo,
+	Ss, Se, Al int,
+	src func() byte,
+	unreadMarker *byte,
+) bool {
+	entropy := &d.State
+	if entropy.Ct == -1 {
+		return true
+	}
+	if len(blocks) == 0 || len(compInfos) == 0 {
+		return true
+	}
+
+	block := &blocks[0]
+	tbl := compInfos[0].ACTblNo
+	p1 := JCOEF(1 << uint(Al))
+	m1 := -p1
+
+	kex := Se
+	for kex > 0 {
+		if block[NaturalOrder[kex]] != 0 {
+			break
+		}
+		kex--
+	}
+
+	k := Ss - 1
+	for {
+		st := entropy.ACStats[tbl][3*k:]
+		if k >= kex {
+			if d.arithDecode(st, src, unreadMarker) != 0 {
+				break
+			}
+		}
+		for {
+			k++
+			thisCoef := &block[NaturalOrder[k]]
+			if *thisCoef != 0 {
+				if d.arithDecode(st[2:], src, unreadMarker) != 0 {
+					if *thisCoef < 0 {
+						*thisCoef += m1
+					} else {
+						*thisCoef += p1
+					}
+				}
+				break
+			}
+			if d.arithDecode(st[1:], src, unreadMarker) != 0 {
+				if d.arithDecode(entropy.FixedBin[:], src, unreadMarker) != 0 {
+					*thisCoef = m1
+				} else {
+					*thisCoef = p1
+				}
+				break
+			}
+			st = st[3:]
+			if k >= Se {
+				entropy.Ct = -1
+				return true
+			}
+		}
+		if k >= Se {
+			break
 		}
 	}
 

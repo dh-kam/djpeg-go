@@ -13,8 +13,8 @@ API이고, `cmd/djpeg` 바이너리는 그 API 위에 얹힌 CLI 호환/디버�
 
 - baseline 및 extended sequential non-progressive JPEG 디코딩이 주 지원
   경로이며, Huffman과 arithmetic entropy coding을 지원합니다.
-- progressive JPEG scanline, raw component, Huffman coefficient output을
-  지원합니다. Progressive arithmetic coefficient decoding은 아직 거부합니다.
+- progressive JPEG scanline, raw component, Huffman coefficient, arithmetic
+  coefficient output을 지원합니다.
 - CLI 출력 중 PPM/PGM 경로가 가장 많이 검증되어 있습니다.
 - BMP, Targa, RLE, 제한적인 GIF writer 코드가 있지만 exact parity 측정은
   현재 PPM/PGM 출력 기준입니다.

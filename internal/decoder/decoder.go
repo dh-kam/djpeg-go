@@ -495,9 +495,6 @@ func (dec *Decoder) StartDecompress() error {
 
 func (dec *Decoder) startProgressiveDecompress() error {
 	d := dec.d
-	if d.ArithCodeFlag {
-		return errors.New("jpeg: progressive arithmetic JPEG not yet supported")
-	}
 	dec.memoryUsed = 0
 	dec.applyInputColorSpaceOverride()
 	dec.applyOutputColorSpaceOverride()
@@ -719,10 +716,6 @@ func (dec *Decoder) ReadCoefficients() ([]CoefficientComponent, error) {
 
 func (dec *Decoder) readProgressiveCoefficients() ([]CoefficientComponent, error) {
 	d := dec.d
-	if d.ArithCodeFlag {
-		return nil, errors.New("jpeg: progressive arithmetic coefficient decoding not yet supported")
-	}
-
 	dec.memoryUsed = 0
 	dec.applyInputColorSpaceOverride()
 	dec.applyOutputColorSpaceOverride()
@@ -761,9 +754,6 @@ func (dec *Decoder) readProgressiveCoefficients() ([]CoefficientComponent, error
 
 func (dec *Decoder) decodeProgressiveScan(out []CoefficientComponent) error {
 	d := dec.d
-	if d.ArithCodeFlag {
-		return errors.New("jpeg: progressive arithmetic coefficient decoding not yet supported")
-	}
 	if err := dec.prepareEntropyDecoder(); err != nil {
 		return err
 	}
@@ -804,8 +794,17 @@ func (dec *Decoder) decodeProgressiveCoefficientMCU(out []CoefficientComponent, 
 			dec.unreadMarker = 0
 			dec.insufficient = false
 			dec.restartsToGo = int(d.RestartInterval)
+			if d.ArithCodeFlag {
+				dec.resetArithmeticStats()
+			}
 		}
 		dec.restartsToGo--
+	}
+
+	if d.ArithCodeFlag {
+		dec.decodeArithmeticProgressiveMCU(blocks)
+		dec.routeCoefficientBlocks(out, blocks, mcuCol)
+		return nil
 	}
 
 	switch {
@@ -874,6 +873,34 @@ func (dec *Decoder) decodeProgressiveCoefficientMCU(out []CoefficientComponent, 
 	}
 	dec.routeCoefficientBlocks(out, blocks, mcuCol)
 	return nil
+}
+
+func (dec *Decoder) decodeArithmeticProgressiveMCU(blocks []huff.Block) {
+	if dec.arithDecoder == nil {
+		return
+	}
+	var dcL, dcU [huff.NumArithTbls]uint8
+	var acK [huff.NumArithTbls]int
+	for i := 0; i < huff.NumArithTbls; i++ {
+		dcL[i] = dec.d.ArithDCL[i]
+		dcU[i] = dec.d.ArithDCU[i]
+		acK[i] = int(dec.d.ArithACK[i])
+	}
+	dec.arithDecoder.DecodeMCUProgressive(
+		blocks,
+		dec.d.BlocksInMCU,
+		dec.mcuMembership,
+		dec.arithCompInfo,
+		dec.d.Ss,
+		dec.d.Se,
+		dec.d.Ah,
+		dec.d.Al,
+		dcL,
+		dcU,
+		acK,
+		dec.nextArithmeticByte,
+		&dec.unreadMarker,
+	)
 }
 
 func (dec *Decoder) loadCoefficientMCUBlocks(out []CoefficientComponent, blocks []huff.Block, mcuCol int) {

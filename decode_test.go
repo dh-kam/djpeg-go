@@ -2472,6 +2472,63 @@ func TestDecoderExposesDACArithmeticMetadata(t *testing.T) {
 	}
 }
 
+func TestDecodeProgressiveArithmetic(t *testing.T) {
+	data := tinyProgressiveArithmeticJPEG()
+	cfg, err := djpeg.DecodeRasterConfig(bytes.NewBuffer(data))
+	if err != nil {
+		t.Fatalf("DecodeRasterConfig progressive arithmetic failed: %v", err)
+	}
+	if !cfg.Progressive || !cfg.Arithmetic || cfg.Width != 8 || cfg.Height != 8 {
+		t.Fatalf("progressive arithmetic config = %+v, want 8x8 progressive arithmetic", cfg)
+	}
+
+	raster, err := djpeg.DecodeRaster(bytes.NewBuffer(data))
+	if err != nil {
+		t.Fatalf("DecodeRaster progressive arithmetic failed: %v", err)
+	}
+	if raster.Format != djpeg.PixelFormatGray8 || raster.Rect.Dx() != 8 || raster.Rect.Dy() != 8 {
+		t.Fatalf("progressive arithmetic raster = %dx%d %s, want 8x8 gray8",
+			raster.Rect.Dx(), raster.Rect.Dy(), raster.Format)
+	}
+	for i, sample := range raster.Pix {
+		if sample != 128 {
+			t.Fatalf("progressive arithmetic sample[%d] = %d, want 128", i, sample)
+		}
+	}
+
+	components, coeffCfg, err := djpeg.DecodeCoefficients(bytes.NewBuffer(data))
+	if err != nil {
+		t.Fatalf("DecodeCoefficients progressive arithmetic failed: %v", err)
+	}
+	if !coeffCfg.Progressive || !coeffCfg.Arithmetic || len(components) != 1 {
+		t.Fatalf("progressive arithmetic coefficients cfg=%+v components=%d, want one component",
+			coeffCfg, len(components))
+	}
+	if len(components[0].Blocks) != 1 {
+		t.Fatalf("progressive arithmetic coefficient blocks=%d, want one block", len(components[0].Blocks))
+	}
+	for k, coef := range components[0].Blocks[0] {
+		if coef != 0 {
+			t.Fatalf("progressive arithmetic coefficient[%d] = %d, want 0", k, coef)
+		}
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewBuffer(data))
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader progressive arithmetic failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress progressive arithmetic failed: %v", err)
+	}
+	row := make([]byte, dec.OutputConfig().Stride)
+	if n, err := dec.ReadScanlines([][]byte{row}); err != nil || n != 1 {
+		t.Fatalf("ReadScanlines progressive arithmetic rows=%d err=%v, want 1 nil", n, err)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress progressive arithmetic failed: %v", err)
+	}
+}
+
 func TestDecodeRasterConfigExposesDecompressParameters(t *testing.T) {
 	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
 	if err != nil {
@@ -2726,6 +2783,40 @@ func tinyArithmeticJPEGWithDAC() []byte {
 	buf.WriteByte(0x00)
 	buf.WriteByte(0x00)
 	buf.WriteByte(0x3f)
+	buf.WriteByte(0x00)
+	buf.Write([]byte{0x00, 0x00})
+	buf.Write([]byte{0xff, 0xd9})
+	return buf.Bytes()
+}
+
+func tinyProgressiveArithmeticJPEG() []byte {
+	var buf bytes.Buffer
+	buf.Write([]byte{0xff, 0xd8})
+
+	buf.Write([]byte{0xff, 0xdb})
+	buf.Write([]byte{0x00, 0x43})
+	buf.WriteByte(0x00)
+	for i := 0; i < 64; i++ {
+		buf.WriteByte(0x01)
+	}
+
+	buf.Write([]byte{0xff, 0xca}) // SOF10 = progressive arithmetic
+	buf.Write([]byte{0x00, 0x0b})
+	buf.WriteByte(0x08)
+	buf.Write([]byte{0x00, 0x08})
+	buf.Write([]byte{0x00, 0x08})
+	buf.WriteByte(0x01)
+	buf.WriteByte(0x01)
+	buf.WriteByte(0x11)
+	buf.WriteByte(0x00)
+
+	buf.Write([]byte{0xff, 0xda})
+	buf.Write([]byte{0x00, 0x08})
+	buf.WriteByte(0x01)
+	buf.WriteByte(0x01)
+	buf.WriteByte(0x00)
+	buf.WriteByte(0x00)
+	buf.WriteByte(0x00)
 	buf.WriteByte(0x00)
 	buf.Write([]byte{0x00, 0x00})
 	buf.Write([]byte{0xff, 0xd9})

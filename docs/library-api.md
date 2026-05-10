@@ -274,13 +274,12 @@ the libjpeg-style scaled-IDCT output path for both raster and raw component
 output.
 
 `WithOutputGamma` and `WithBlockSmoothing` mirror libjpeg decompressor
-parameters. Progressive Huffman scanline and raw component output use the pure
-Go decoder path, including low-level `Decoder` use with non-seekable readers.
-Scaled and quantized progressive raster output are available through the same
-public facade. Progressive Huffman coefficient output is supported through
-`DecodeCoefficients` and `ReadCoefficients`; progressive arithmetic coefficient
-output is still reported as `ErrUnsupported`. One-shot APIs buffer non-seekable
-readers as needed.
+parameters. Progressive Huffman and arithmetic scanline output use the pure Go
+decoder path, including low-level `Decoder` use with non-seekable readers.
+Progressive raw component output, scaled raster output, and quantized raster
+output are available through the same public facade. Progressive Huffman and
+arithmetic coefficient output is supported through `DecodeCoefficients` and
+`ReadCoefficients`. One-shot APIs buffer non-seekable readers as needed.
 
 ## Buffered-Image Output Passes
 
@@ -420,9 +419,8 @@ if err != nil {
 _ = components
 ```
 
-Progressive Huffman coefficient decoding is supported. Progressive arithmetic
-coefficient decoding is still reported as `ErrUnsupported`. Sequential
-arithmetic-coded coefficient decoding is supported.
+Progressive Huffman and arithmetic coefficient decoding is supported.
+Sequential arithmetic-coded coefficient decoding is supported.
 
 ## Raw Component Output
 
@@ -968,12 +966,11 @@ if err != nil {
 _ = img
 ```
 
-Currently unsupported JPEG features include progressive arithmetic coefficient
-decoding. Progressive headers can be inspected through `ReadHeader` and
-`DecodeRasterConfig`; progressive scanlines and raw component output are
-available through one-shot APIs and seekable low-level decoder inputs, and
-progressive Huffman coefficients are available through `DecodeCoefficients` and
-`ReadCoefficients`.
+Progressive headers can be inspected through `ReadHeader` and
+`DecodeRasterConfig`; progressive scanlines, raw component output, and
+progressive coefficients are available through one-shot APIs and low-level
+decoder inputs, including non-seekable readers. Use `DecodeCoefficients` or
+`ReadCoefficients` for coefficient access.
 
 ## Mapping CLI Flags to API Options
 
@@ -1031,10 +1028,9 @@ package rules for external consumers.
 
 - Baseline and extended sequential non-progressive JPEGs are the supported
   paths, including Huffman and arithmetic entropy coding.
-- Progressive JPEG scanlines and raw component output can be decoded by
-  one-shot APIs and seekable low-level decoder inputs. Progressive Huffman
-  coefficient decoding is supported; progressive arithmetic coefficient
-  decoding returns `ErrUnsupported`.
+- Progressive JPEG scanlines, raw component output, and coefficients can be
+  decoded by one-shot APIs and low-level decoder inputs, including non-seekable
+  readers.
 - `Decode` returns a `*Raster` behind the `image.Image` interface. This keeps
   raw bytes available without forcing an RGBA allocation.
 - The package does not call `image.RegisterFormat` automatically. Use
