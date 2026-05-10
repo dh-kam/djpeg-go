@@ -4,9 +4,9 @@
 // extended sequential, and sequential arithmetic-coded files. Decode returns an
 // image.Image for idiomatic Go callers, DecodeRaster exposes the raw Gray8 or
 // RGB24 byte buffer used by renderers, and Decoder provides a scanline API
-// shaped after libjpeg's decompressor flow. Progressive scanline and raw
-// component output are available through a fallback path; progressive
-// coefficient decoding is not yet implemented.
+// shaped after libjpeg's decompressor flow. Progressive scanline, raw
+// component, and Huffman coefficient output are available; progressive
+// arithmetic coefficient decoding is not yet implemented.
 // The cmd/djpeg command is a CLI compatibility and debug tool built on top of
 // this library API.
 package djpeg

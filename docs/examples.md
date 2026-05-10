@@ -323,5 +323,5 @@ The latest report is in [performance.md](performance.md).
 
 Sequential arithmetic-coded JPEG files are supported. Progressive JPEG scanline
 and raw component output are supported by one-shot APIs and seekable low-level
-decoder inputs. Progressive coefficient decoding is still rejected by the
-decoder.
+decoder inputs. Progressive Huffman coefficient decoding is supported;
+progressive arithmetic coefficient decoding is still rejected by the decoder.

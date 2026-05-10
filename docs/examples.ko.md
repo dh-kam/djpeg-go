@@ -323,4 +323,5 @@ scripts/perf_compare.py \
 
 Sequential arithmetic-coded JPEG는 지원합니다. Progressive JPEG scanline과 raw
 component output은 one-shot API와 seek 가능한 low-level decoder input에서
-지원합니다. Progressive coefficient decoding은 아직 decoder에서 거부합니다.
+지원합니다. Progressive Huffman coefficient decoding은 지원하며, progressive
+arithmetic coefficient decoding은 아직 decoder에서 거부합니다.

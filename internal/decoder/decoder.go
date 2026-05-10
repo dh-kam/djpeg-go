@@ -618,7 +618,7 @@ func (dec *Decoder) ReadCoefficients() ([]CoefficientComponent, error) {
 		return nil, marker.ErrBadState
 	}
 	if d.IsProgressive() {
-		return nil, errors.New("jpeg: progressive coefficient decoding not yet supported")
+		return dec.readProgressiveCoefficients()
 	}
 
 	dec.memoryUsed = 0
@@ -658,6 +658,195 @@ func (dec *Decoder) ReadCoefficients() ([]CoefficientComponent, error) {
 	dec.allDecoded = true
 	d.OutputScanline = d.OutputHeight
 	return out, nil
+}
+
+func (dec *Decoder) readProgressiveCoefficients() ([]CoefficientComponent, error) {
+	d := dec.d
+	if d.ArithCodeFlag {
+		return nil, errors.New("jpeg: progressive arithmetic coefficient decoding not yet supported")
+	}
+
+	dec.memoryUsed = 0
+	dec.applyInputColorSpaceOverride()
+	dec.applyOutputColorSpaceOverride()
+	dec.applyColorTransformOverride()
+	if err := d.StartInputPass(); err != nil {
+		return nil, err
+	}
+	d.GlobalState = marker.DStatePreload
+
+	out, err := dec.allocCoefficientComponents()
+	if err != nil {
+		return nil, err
+	}
+	for {
+		if err := dec.decodeProgressiveScan(out); err != nil {
+			return nil, err
+		}
+		retcode, err := d.ConsumeInput()
+		if err != nil {
+			return nil, err
+		}
+		switch retcode {
+		case marker.JPEGReachedEOI:
+			dec.allDecoded = true
+			d.OutputScanline = d.OutputHeight
+			return out, nil
+		case marker.JPEGReachedSOS:
+			continue
+		case marker.JPEGSuspended:
+			return nil, marker.ErrSuspension
+		default:
+			return nil, errors.New("jpeg: unexpected marker state after progressive scan")
+		}
+	}
+}
+
+func (dec *Decoder) decodeProgressiveScan(out []CoefficientComponent) error {
+	d := dec.d
+	if d.ArithCodeFlag {
+		return errors.New("jpeg: progressive arithmetic coefficient decoding not yet supported")
+	}
+	if err := dec.prepareEntropyDecoder(); err != nil {
+		return err
+	}
+	if err := dec.readScanDataToMarker(); err != nil {
+		return err
+	}
+	dec.restartsToGo = int(d.RestartInterval)
+	dec.insufficient = false
+	dec.unreadMarker = 0
+	dec.permState = huff.BitReadState{}
+	dec.savedState = huff.SavableState{}
+	dec.workState = huff.BitReadWorkingState{}
+	dec.resetEntropyInput()
+	dec.mcuMembership = make([]int, d.BlocksInMCU)
+	copy(dec.mcuMembership, d.MCUMembership[:d.BlocksInMCU])
+	if len(dec.blocks) < d.BlocksInMCU {
+		dec.blocks = make([]huff.Block, d.BlocksInMCU)
+	}
+
+	for dec.currentIMCURow = 0; dec.currentIMCURow < d.MCURowsInScan; dec.currentIMCURow++ {
+		for mcuCol := 0; mcuCol < d.MCUsPerRow; mcuCol++ {
+			if err := dec.decodeProgressiveCoefficientMCU(out, mcuCol); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (dec *Decoder) decodeProgressiveCoefficientMCU(out []CoefficientComponent, mcuCol int) error {
+	d := dec.d
+	blocks := dec.blocks[:d.BlocksInMCU]
+	dec.loadCoefficientMCUBlocks(out, blocks, mcuCol)
+
+	if d.RestartInterval != 0 {
+		if dec.restartsToGo == 0 {
+			dec.savedState = huff.SavableState{}
+			dec.unreadMarker = 0
+			dec.insufficient = false
+			dec.restartsToGo = int(d.RestartInterval)
+		}
+		dec.restartsToGo--
+	}
+
+	switch {
+	case d.Ss == 0 && d.Ah == 0:
+		_ = huff.DecodeMCUDCFirst(
+			&dec.workState,
+			&dec.permState,
+			&dec.savedState,
+			blocks,
+			dec.dcTables,
+			d.BlocksInMCU,
+			dec.mcuMembership,
+			d.Al,
+			0,
+			&dec.restartsToGo,
+			&dec.insufficient,
+			&dec.unreadMarker,
+		)
+	case d.Ss == 0:
+		_ = huff.DecodeMCUDCRefine(
+			&dec.workState,
+			&dec.permState,
+			blocks,
+			d.BlocksInMCU,
+			d.Al,
+			0,
+			&dec.restartsToGo,
+			&dec.unreadMarker,
+		)
+	case d.Ah == 0:
+		if d.BlocksInMCU != 1 {
+			return errors.New("jpeg: progressive AC scan must contain one block per MCU")
+		}
+		_ = huff.DecodeMCUACFirst(
+			&dec.workState,
+			&dec.permState,
+			&dec.savedState,
+			&blocks[0],
+			dec.acTables[0],
+			d.Ss,
+			d.Se,
+			d.Al,
+			0,
+			&dec.restartsToGo,
+			&dec.insufficient,
+			&dec.unreadMarker,
+		)
+	default:
+		if d.BlocksInMCU != 1 {
+			return errors.New("jpeg: progressive AC refinement scan must contain one block per MCU")
+		}
+		_ = huff.DecodeMCUACRefine(
+			&dec.workState,
+			&dec.permState,
+			&dec.savedState,
+			&blocks[0],
+			dec.acTables[0],
+			d.Ss,
+			d.Se,
+			d.Al,
+			0,
+			&dec.restartsToGo,
+			&dec.insufficient,
+			&dec.unreadMarker,
+		)
+	}
+	dec.routeCoefficientBlocks(out, blocks, mcuCol)
+	return nil
+}
+
+func (dec *Decoder) loadCoefficientMCUBlocks(out []CoefficientComponent, blocks []huff.Block, mcuCol int) {
+	d := dec.d
+	for i := range blocks {
+		blocks[i] = huff.Block{}
+	}
+	blkIdx := 0
+	for ci := 0; ci < d.CompsInScan; ci++ {
+		comp := d.CurCompInfo[ci]
+		if comp == nil {
+			continue
+		}
+		if comp.ComponentIndex < 0 || comp.ComponentIndex >= len(out) {
+			blkIdx += comp.MCUBlocks
+			continue
+		}
+		src := &out[comp.ComponentIndex]
+		for yIndex := 0; yIndex < comp.MCUHeight; yIndex++ {
+			blockY := dec.currentIMCURow*comp.MCUHeight + yIndex
+			for xIndex := 0; xIndex < comp.MCUWidth; xIndex++ {
+				blockX := mcuCol*comp.MCUWidth + xIndex
+				blockIndex := blkIdx + xIndex
+				if blockY < src.HeightInBlocks && blockX < src.WidthInBlocks && blockIndex < len(blocks) {
+					copy(blocks[blockIndex][:], src.Blocks[blockY*src.WidthInBlocks+blockX][:])
+				}
+			}
+			blkIdx += comp.MCUWidth
+		}
+	}
 }
 
 func (dec *Decoder) allocCoefficientComponents() ([]CoefficientComponent, error) {
@@ -1046,6 +1235,82 @@ func (dec *Decoder) readAllScanData() error {
 		return err
 	}
 	return nil
+}
+
+func (dec *Decoder) readScanDataToMarker() error {
+	buf := make([]byte, 0, 8192)
+	var scratch [1]byte
+	for {
+		if _, err := io.ReadFull(dec.d.Src, scratch[:]); err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				dec.scanData = buf
+				return nil
+			}
+			return err
+		}
+		c := scratch[0]
+		if c != 0xFF {
+			var err error
+			buf, err = dec.appendScanDataByte(buf, c)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+
+		if _, err := io.ReadFull(dec.d.Src, scratch[:]); err != nil {
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				buf, err = dec.appendScanDataByte(buf, 0xFF)
+				if err != nil {
+					return err
+				}
+				dec.scanData = buf
+				return nil
+			}
+			return err
+		}
+		next := scratch[0]
+		for next == 0xFF {
+			if _, err := io.ReadFull(dec.d.Src, scratch[:]); err != nil {
+				if err == io.EOF || err == io.ErrUnexpectedEOF {
+					dec.scanData = buf
+					return nil
+				}
+				return err
+			}
+			next = scratch[0]
+		}
+		switch {
+		case next == 0x00:
+			var err error
+			buf, err = dec.appendScanDataBytes(buf, 0xFF, 0x00)
+			if err != nil {
+				return err
+			}
+		case next >= marker.M_RST0 && next <= marker.M_RST7:
+			continue
+		default:
+			dec.d.UnreadMarker = int(next)
+			dec.scanData = buf
+			return nil
+		}
+	}
+}
+
+func (dec *Decoder) appendScanDataByte(buf []byte, b byte) ([]byte, error) {
+	if dec.maxMemoryBytes > 0 && int64(len(buf)+1) > dec.maxMemoryBytes {
+		return nil, fmt.Errorf("%w: entropy stream needs at least %d bytes, limit is %d",
+			ErrMemoryLimitExceeded, len(buf)+1, dec.maxMemoryBytes)
+	}
+	return append(buf, b), nil
+}
+
+func (dec *Decoder) appendScanDataBytes(buf []byte, bytes ...byte) ([]byte, error) {
+	if dec.maxMemoryBytes > 0 && int64(len(buf)+len(bytes)) > dec.maxMemoryBytes {
+		return nil, fmt.Errorf("%w: entropy stream needs at least %d bytes, limit is %d",
+			ErrMemoryLimitExceeded, len(buf)+len(bytes), dec.maxMemoryBytes)
+	}
+	return append(buf, bytes...), nil
 }
 
 func (dec *Decoder) decodeIMCURow() {
@@ -1873,41 +2138,47 @@ func (dec *Decoder) buildHuffmanTables() error {
 	dec.acTables = make([]*huff.DerivedHuffTable, blocksInMCU)
 	dcCache := make(map[int]*huff.DerivedHuffTable)
 	acCache := make(map[int]*huff.DerivedHuffTable)
+	needDCTables := !d.ProgressiveMode || d.Ss == 0
+	needACTables := !d.ProgressiveMode || d.Se != 0
 
 	for blkn := 0; blkn < blocksInMCU; blkn++ {
 		ci := d.MCUMembership[blkn]
 		comp := d.CurCompInfo[ci]
 
-		dcTblNo := comp.DCTblNo
-		if derivedDC, ok := dcCache[dcTblNo]; ok {
-			dec.dcTables[blkn] = derivedDC
-		} else {
-			dcTbl := d.DCHuffTbls[dcTblNo]
-			if dcTbl == nil {
-				return errors.New("jpeg: missing DC Huffman table")
+		if needDCTables {
+			dcTblNo := comp.DCTblNo
+			if derivedDC, ok := dcCache[dcTblNo]; ok {
+				dec.dcTables[blkn] = derivedDC
+			} else {
+				dcTbl := d.DCHuffTbls[dcTblNo]
+				if dcTbl == nil {
+					return errors.New("jpeg: missing DC Huffman table")
+				}
+				derivedDC, err := huff.MakeDerivedHuffTable(convertHuffTable(dcTbl))
+				if err != nil {
+					return err
+				}
+				dcCache[dcTblNo] = derivedDC
+				dec.dcTables[blkn] = derivedDC
 			}
-			derivedDC, err := huff.MakeDerivedHuffTable(convertHuffTable(dcTbl))
-			if err != nil {
-				return err
-			}
-			dcCache[dcTblNo] = derivedDC
-			dec.dcTables[blkn] = derivedDC
 		}
 
-		acTblNo := comp.ACTblNo
-		if derivedAC, ok := acCache[acTblNo]; ok {
-			dec.acTables[blkn] = derivedAC
-		} else {
-			acTbl := d.ACHuffTbls[acTblNo]
-			if acTbl == nil {
-				return errors.New("jpeg: missing AC Huffman table")
+		if needACTables {
+			acTblNo := comp.ACTblNo
+			if derivedAC, ok := acCache[acTblNo]; ok {
+				dec.acTables[blkn] = derivedAC
+			} else {
+				acTbl := d.ACHuffTbls[acTblNo]
+				if acTbl == nil {
+					return errors.New("jpeg: missing AC Huffman table")
+				}
+				derivedAC, err := huff.MakeDerivedHuffTable(convertHuffTable(acTbl))
+				if err != nil {
+					return err
+				}
+				acCache[acTblNo] = derivedAC
+				dec.acTables[blkn] = derivedAC
 			}
-			derivedAC, err := huff.MakeDerivedHuffTable(convertHuffTable(acTbl))
-			if err != nil {
-				return err
-			}
-			acCache[acTblNo] = derivedAC
-			dec.acTables[blkn] = derivedAC
 		}
 	}
 	return nil

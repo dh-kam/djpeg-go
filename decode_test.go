@@ -1797,6 +1797,28 @@ func assertRawComponentsEqual(t *testing.T, got, want []djpeg.RawComponent, labe
 	}
 }
 
+func assertCoefficientComponentsEqual(t *testing.T, got, want []djpeg.CoefficientComponent, label string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s components = %d, want %d", label, len(got), len(want))
+	}
+	for i := range got {
+		if got[i].WidthInBlocks != want[i].WidthInBlocks ||
+			got[i].HeightInBlocks != want[i].HeightInBlocks ||
+			len(got[i].Blocks) != len(want[i].Blocks) {
+			t.Fatalf("%s component %d layout = %dx%d len %d, want %dx%d len %d",
+				label, i,
+				got[i].WidthInBlocks, got[i].HeightInBlocks, len(got[i].Blocks),
+				want[i].WidthInBlocks, want[i].HeightInBlocks, len(want[i].Blocks))
+		}
+		for j := range got[i].Blocks {
+			if got[i].Blocks[j] != want[i].Blocks[j] {
+				t.Fatalf("%s component %d block %d differs", label, i, j)
+			}
+		}
+	}
+}
+
 func TestDecoderProgressMonitor(t *testing.T) {
 	data, err := os.ReadFile("tests/testdata/gray_8x8.jpg")
 	if err != nil {
@@ -1926,19 +1948,50 @@ func TestDecodeCoefficientsInvalidOptions(t *testing.T) {
 	}
 }
 
-func TestDecoderReadCoefficientsProgressiveUnsupported(t *testing.T) {
+func TestDecoderReadCoefficientsProgressive(t *testing.T) {
 	data, err := os.ReadFile("tests/testdata/test_progressive.jpg")
 	if err != nil {
 		t.Skipf("fixture missing: %v", err)
+	}
+
+	components, cfg, err := djpeg.DecodeCoefficients(bytes.NewBuffer(data))
+	if err != nil {
+		t.Fatalf("DecodeCoefficients progressive non-seekable failed: %v", err)
+	}
+	if !cfg.Progressive {
+		t.Fatalf("DecodeCoefficients progressive config = %+v, want progressive", cfg)
+	}
+	if len(components) != 3 {
+		t.Fatalf("DecodeCoefficients progressive components = %d, want 3", len(components))
+	}
+	nonZero := false
+	for i, comp := range components {
+		if comp.WidthInBlocks <= 0 || comp.HeightInBlocks <= 0 || len(comp.Blocks) != comp.WidthInBlocks*comp.HeightInBlocks {
+			t.Fatalf("progressive coefficient component %d invalid: %dx%d len=%d",
+				i, comp.WidthInBlocks, comp.HeightInBlocks, len(comp.Blocks))
+		}
+		for _, block := range comp.Blocks {
+			for _, coef := range block {
+				if coef != 0 {
+					nonZero = true
+					break
+				}
+			}
+		}
+	}
+	if !nonZero {
+		t.Fatal("DecodeCoefficients progressive returned all-zero coefficients")
 	}
 
 	dec := djpeg.NewDecoder(bytes.NewReader(data))
 	if _, status, err := dec.ReadHeaderRequireImage(true); err != nil || status != djpeg.HeaderOK {
 		t.Fatalf("ReadHeaderRequireImage progressive status=%v err=%v, want ok nil", status, err)
 	}
-	if _, err := dec.ReadCoefficients(); !errors.Is(err, djpeg.ErrUnsupported) {
-		t.Fatalf("ReadCoefficients progressive error = %v, want ErrUnsupported", err)
+	lowLevel, err := dec.ReadCoefficients()
+	if err != nil {
+		t.Fatalf("ReadCoefficients progressive failed: %v", err)
 	}
+	assertCoefficientComponentsEqual(t, lowLevel, components, "progressive low-level coefficients")
 }
 
 func TestDecoderTables(t *testing.T) {

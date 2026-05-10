@@ -1162,8 +1162,7 @@ func (d *Decoder) rawComponentRowsPerIMCU(comp Component, linesPerIMCU int) int 
 }
 
 // ReadCoefficients returns quantized DCT coefficient blocks for each component.
-// It mirrors libjpeg's jpeg_read_coefficients at the facade level for baseline
-// sequential JPEGs.
+// It mirrors libjpeg's jpeg_read_coefficients at the facade level.
 func (d *Decoder) ReadCoefficients() ([]CoefficientComponent, error) {
 	if d.started {
 		return nil, fmt.Errorf("%w: ReadCoefficients must be called before StartDecompress", ErrInvalidOption)
@@ -1186,9 +1185,6 @@ func (d *Decoder) ReadCoefficients() ([]CoefficientComponent, error) {
 	}
 	if err := d.applyOptions(); err != nil {
 		return nil, err
-	}
-	if d.dec.IsProgressive() {
-		return nil, wrapDecodeError("read coefficients", fmt.Errorf("jpeg: progressive coefficient decoding not yet supported"))
 	}
 	d.reportProgress(0, d.header.Height)
 	internal, err := d.dec.ReadCoefficients()
