@@ -275,10 +275,11 @@ output.
 
 `WithOutputGamma` and `WithBlockSmoothing` mirror libjpeg decompressor
 parameters. Progressive scanline output is available through a pure Go fallback
-path, including scaled and quantized raster output. One-shot raster APIs buffer
-non-seekable readers as needed; low-level `Decoder` progressive output requires
-a seekable input. Progressive coefficient decoding is still reported as
-`ErrUnsupported`.
+path, including scaled and quantized raster output. Progressive raw component
+output is also available for one-shot APIs and seekable low-level decoder
+inputs. One-shot APIs buffer non-seekable readers as needed; low-level
+`Decoder` progressive output requires a seekable input. Progressive coefficient
+decoding is still reported as `ErrUnsupported`.
 
 ## Buffered-Image Output Passes
 
@@ -967,8 +968,8 @@ _ = img
 
 Currently unsupported JPEG features include progressive coefficient decoding.
 Progressive headers can be inspected through `ReadHeader` and
-`DecodeRasterConfig`; progressive scanlines are available through one-shot
-raster APIs and seekable low-level decoder inputs.
+`DecodeRasterConfig`; progressive scanlines and raw component output are
+available through one-shot APIs and seekable low-level decoder inputs.
 
 ## Mapping CLI Flags to API Options
 
@@ -1026,9 +1027,9 @@ package rules for external consumers.
 
 - Baseline and extended sequential non-progressive JPEGs are the supported
   paths, including Huffman and arithmetic entropy coding.
-- Progressive JPEG scanlines can be decoded by one-shot raster APIs and seekable
-  low-level decoder inputs. Progressive coefficient decoding returns
-  `ErrUnsupported`.
+- Progressive JPEG scanlines and raw component output can be decoded by
+  one-shot APIs and seekable low-level decoder inputs. Progressive coefficient
+  decoding returns `ErrUnsupported`.
 - `Decode` returns a `*Raster` behind the `image.Image` interface. This keeps
   raw bytes available without forcing an RGBA allocation.
 - The package does not call `image.RegisterFormat` automatically. Use

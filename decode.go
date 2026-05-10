@@ -196,6 +196,11 @@ func DecodeRawComponents(r io.Reader, opts ...Option) ([]RawComponent, Config, e
 func DecodeRawComponentsWithOptions(r io.Reader, opts *Options) ([]RawComponent, Config, error) {
 	options := optionsFromPointer(opts)
 	options.RawDataOut = true
+	var err error
+	r, err = oneShotDecodeReader(r)
+	if err != nil {
+		return nil, Config{}, err
+	}
 	dec := newDecoderWithOptions(r, options)
 	if _, err := dec.ReadHeader(); err != nil {
 		return nil, Config{}, err
@@ -480,9 +485,6 @@ func (d *Decoder) StartDecompress() error {
 }
 
 func (d *Decoder) startProgressiveFallback() error {
-	if d.opts.RawDataOut {
-		return wrapDecodeError("start decompress", fmt.Errorf("jpeg: progressive raw data output not yet supported"))
-	}
 	if _, _, err := d.opts.scaleSize(); err != nil {
 		return err
 	}
@@ -495,6 +497,9 @@ func (d *Decoder) startProgressiveFallback() error {
 	img, err := stdjpeg.Decode(d.source)
 	if err != nil {
 		return wrapDecodeError("decode progressive", err)
+	}
+	if d.opts.RawDataOut {
+		return d.startProgressiveRawFallback(img)
 	}
 	format, err := d.progressiveBasePixelFormat()
 	if err != nil {
@@ -544,6 +549,41 @@ func (d *Decoder) startProgressiveFallback() error {
 	d.output.Stride = raster.Stride
 	d.output.PixelFormat = raster.Format
 	d.output.InputComplete = true
+	if d.opts.BufferedImage {
+		d.outputPass = false
+	}
+	return nil
+}
+
+func (d *Decoder) startProgressiveRawFallback(img image.Image) error {
+	components, err := d.progressiveRawComponentsFromImage(img)
+	if err != nil {
+		return err
+	}
+	linesPerIMCU := d.RawDataLinesPerIMCURow()
+	if linesPerIMCU <= 0 {
+		return fmt.Errorf("%w: invalid raw data iMCU row height %d", ErrInvalidOption, linesPerIMCU)
+	}
+	output := d.header
+	output.RawDataOut = true
+	output.InputComplete = true
+	d.scaled = nil
+	d.scaledNextRow = 0
+	d.rawBufferedAll = cloneRawComponents(components)
+	d.rawBufferedRows = d.rawRowsFromComponents(components, linesPerIMCU, output.Height)
+	d.rawBufferedNext = 0
+	d.quantSource = nil
+	d.palette = nil
+	d.started = true
+	d.internalDone = true
+	d.outputPass = !d.opts.BufferedImage
+	d.inputScan = d.dec.InputScanNumber()
+	if d.inputScan <= 0 {
+		d.inputScan = 1
+	}
+	d.outputScan = d.inputScan
+	d.inputComplete = true
+	d.output = output
 	if d.opts.BufferedImage {
 		d.outputPass = false
 	}
@@ -819,6 +859,306 @@ func appendRawComponents(dst, rows []RawComponent) []RawComponent {
 		dst[i].Height += row.Height
 	}
 	return dst
+}
+
+func (d *Decoder) progressiveRawComponentsFromImage(img image.Image) ([]RawComponent, error) {
+	if img == nil {
+		return nil, ErrInvalidOption
+	}
+	components := d.Components()
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+	switch d.header.InputComponents {
+	case 1:
+		comp := rawComponentMetadata(components, 0, width, height, d.header)
+		return []RawComponent{rawGrayComponentFromImage(img, comp)}, nil
+	case 3:
+		if ycbcr, ok := img.(*image.YCbCr); ok {
+			return rawComponentsFromYCbCr(ycbcr, components, d.header), nil
+		}
+		raster, err := rasterFromImage(img, PixelFormatRGB24)
+		if err != nil {
+			return nil, err
+		}
+		return rawComponentsFromRaster(raster, components, d.header), nil
+	case 4:
+		if cmyk, ok := img.(*image.CMYK); ok {
+			return rawComponentsFromCMYK(cmyk, components, d.header), nil
+		}
+		raster, err := rasterFromImage(img, PixelFormatCMYK32)
+		if err != nil {
+			return nil, err
+		}
+		return rawComponentsFromRaster(raster, components, d.header), nil
+	default:
+		return nil, fmt.Errorf("%w: progressive raw data output with %d input components is not supported", ErrUnsupported, d.header.InputComponents)
+	}
+}
+
+func rawComponentMetadata(components []Component, index, width, height int, cfg Config) Component {
+	comp := Component{
+		ID:                index + 1,
+		Index:             index,
+		HSampFactor:       1,
+		VSampFactor:       1,
+		DownsampledWidth:  width,
+		DownsampledHeight: height,
+		DCTHScaledSize:    cfg.MinDCTHScaledSize,
+		DCTVScaledSize:    cfg.MinDCTVScaledSize,
+		ComponentNeeded:   true,
+	}
+	if index < len(components) {
+		comp = components[index]
+		if comp.Index == 0 && index != 0 {
+			comp.Index = index
+		}
+		if comp.ID == 0 {
+			comp.ID = index + 1
+		}
+		if comp.HSampFactor <= 0 {
+			comp.HSampFactor = 1
+		}
+		if comp.VSampFactor <= 0 {
+			comp.VSampFactor = 1
+		}
+		if comp.DCTHScaledSize <= 0 {
+			comp.DCTHScaledSize = cfg.MinDCTHScaledSize
+		}
+		if comp.DCTVScaledSize <= 0 {
+			comp.DCTVScaledSize = cfg.MinDCTVScaledSize
+		}
+		if comp.DownsampledWidth <= 0 {
+			comp.DownsampledWidth = width
+		}
+		if comp.DownsampledHeight <= 0 {
+			comp.DownsampledHeight = height
+		}
+	}
+	return comp
+}
+
+func rawGrayComponentFromImage(img image.Image, comp Component) RawComponent {
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+	dstWidth := rawComponentWidth(comp, width)
+	dstHeight := rawComponentHeight(comp, height)
+	if gray, ok := img.(*image.Gray); ok {
+		pix := resampleRawPlane(width, height, dstWidth, dstHeight, func(x, y int) byte {
+			return gray.Pix[gray.PixOffset(bounds.Min.X+x, bounds.Min.Y+y)]
+		})
+		return RawComponent{Component: comp, Width: dstWidth, Height: dstHeight, Stride: dstWidth, Pix: pix}
+	}
+	pix := resampleRawPlane(width, height, dstWidth, dstHeight, func(x, y int) byte {
+		return color.GrayModel.Convert(img.At(bounds.Min.X+x, bounds.Min.Y+y)).(color.Gray).Y
+	})
+	return RawComponent{Component: comp, Width: dstWidth, Height: dstHeight, Stride: dstWidth, Pix: pix}
+}
+
+func rawComponentsFromYCbCr(img *image.YCbCr, components []Component, cfg Config) []RawComponent {
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+	cWidth, cHeight := yCbCrChromaSize(width, height, img.SubsampleRatio)
+	hFactor, vFactor := yCbCrSubsampleFactors(img.SubsampleRatio)
+	if hFactor <= 0 {
+		hFactor = 1
+	}
+	if vFactor <= 0 {
+		vFactor = 1
+	}
+
+	yComp := rawComponentMetadata(components, 0, width, height, cfg)
+	cbComp := rawComponentMetadata(components, 1, cWidth, cHeight, cfg)
+	crComp := rawComponentMetadata(components, 2, cWidth, cHeight, cfg)
+	yWidth, yHeight := rawComponentWidth(yComp, width), rawComponentHeight(yComp, height)
+	cbWidth, cbHeight := rawComponentWidth(cbComp, cWidth), rawComponentHeight(cbComp, cHeight)
+	crWidth, crHeight := rawComponentWidth(crComp, cWidth), rawComponentHeight(crComp, cHeight)
+
+	yPix := resampleRawPlane(width, height, yWidth, yHeight, func(x, y int) byte {
+		return img.Y[img.YOffset(bounds.Min.X+x, bounds.Min.Y+y)]
+	})
+	cbPix := resampleRawPlane(cWidth, cHeight, cbWidth, cbHeight, func(x, y int) byte {
+		return img.Cb[img.COffset(bounds.Min.X+x*hFactor, bounds.Min.Y+y*vFactor)]
+	})
+	crPix := resampleRawPlane(cWidth, cHeight, crWidth, crHeight, func(x, y int) byte {
+		return img.Cr[img.COffset(bounds.Min.X+x*hFactor, bounds.Min.Y+y*vFactor)]
+	})
+
+	return []RawComponent{
+		{Component: yComp, Width: yWidth, Height: yHeight, Stride: yWidth, Pix: yPix},
+		{Component: cbComp, Width: cbWidth, Height: cbHeight, Stride: cbWidth, Pix: cbPix},
+		{Component: crComp, Width: crWidth, Height: crHeight, Stride: crWidth, Pix: crPix},
+	}
+}
+
+func rawComponentsFromCMYK(img *image.CMYK, components []Component, cfg Config) []RawComponent {
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+	out := make([]RawComponent, 4)
+	for index := range out {
+		comp := rawComponentMetadata(components, index, width, height, cfg)
+		dstWidth := rawComponentWidth(comp, width)
+		dstHeight := rawComponentHeight(comp, height)
+		pix := resampleRawPlane(width, height, dstWidth, dstHeight, func(x, y int) byte {
+			base := img.PixOffset(bounds.Min.X+x, bounds.Min.Y+y)
+			return img.Pix[base+index]
+		})
+		out[index] = RawComponent{Component: comp, Width: dstWidth, Height: dstHeight, Stride: dstWidth, Pix: pix}
+	}
+	return out
+}
+
+func rawComponentsFromRaster(raster *Raster, components []Component, cfg Config) []RawComponent {
+	if raster == nil {
+		return nil
+	}
+	width := raster.Rect.Dx()
+	height := raster.Rect.Dy()
+	channels := raster.Format.Channels()
+	out := make([]RawComponent, channels)
+	for index := range out {
+		comp := rawComponentMetadata(components, index, width, height, cfg)
+		dstWidth := rawComponentWidth(comp, width)
+		dstHeight := rawComponentHeight(comp, height)
+		pix := resampleRawPlane(width, height, dstWidth, dstHeight, func(x, y int) byte {
+			return raster.Pix[y*raster.Stride+x*channels+index]
+		})
+		out[index] = RawComponent{Component: comp, Width: dstWidth, Height: dstHeight, Stride: dstWidth, Pix: pix}
+	}
+	return out
+}
+
+func rawComponentWidth(comp Component, fallback int) int {
+	if comp.DownsampledWidth > 0 {
+		return comp.DownsampledWidth
+	}
+	return fallback
+}
+
+func rawComponentHeight(comp Component, fallback int) int {
+	if comp.DownsampledHeight > 0 {
+		return comp.DownsampledHeight
+	}
+	return fallback
+}
+
+func resampleRawPlane(srcWidth, srcHeight, dstWidth, dstHeight int, sample func(x, y int) byte) []byte {
+	if srcWidth <= 0 || srcHeight <= 0 || dstWidth <= 0 || dstHeight <= 0 {
+		return nil
+	}
+	pix := make([]byte, dstWidth*dstHeight)
+	for y := 0; y < dstHeight; y++ {
+		srcY := rawPlaneCoord(y, dstHeight, srcHeight)
+		for x := 0; x < dstWidth; x++ {
+			srcX := rawPlaneCoord(x, dstWidth, srcWidth)
+			pix[y*dstWidth+x] = sample(srcX, srcY)
+		}
+	}
+	return pix
+}
+
+func rawPlaneCoord(pos, dstSize, srcSize int) int {
+	if srcSize <= 1 {
+		return 0
+	}
+	if dstSize <= srcSize {
+		mapped := pos * srcSize / dstSize
+		if mapped >= srcSize {
+			return srcSize - 1
+		}
+		return mapped
+	}
+	if pos >= srcSize {
+		return srcSize - 1
+	}
+	return pos
+}
+
+func yCbCrChromaSize(width, height int, ratio image.YCbCrSubsampleRatio) (int, int) {
+	hFactor, vFactor := yCbCrSubsampleFactors(ratio)
+	return ceilDiv(width, hFactor), ceilDiv(height, vFactor)
+}
+
+func yCbCrSubsampleFactors(ratio image.YCbCrSubsampleRatio) (int, int) {
+	switch ratio {
+	case image.YCbCrSubsampleRatio444:
+		return 1, 1
+	case image.YCbCrSubsampleRatio422:
+		return 2, 1
+	case image.YCbCrSubsampleRatio420:
+		return 2, 2
+	case image.YCbCrSubsampleRatio440:
+		return 1, 2
+	case image.YCbCrSubsampleRatio411:
+		return 4, 1
+	case image.YCbCrSubsampleRatio410:
+		return 4, 2
+	default:
+		return 1, 1
+	}
+}
+
+func ceilDiv(n, d int) int {
+	if d <= 0 {
+		return 0
+	}
+	if n <= 0 {
+		return 0
+	}
+	return (n + d - 1) / d
+}
+
+func (d *Decoder) rawRowsFromComponents(components []RawComponent, linesPerIMCU, outputHeight int) [][]RawComponent {
+	if len(components) == 0 || linesPerIMCU <= 0 || outputHeight <= 0 {
+		return nil
+	}
+	rowCount := ceilDiv(outputHeight, linesPerIMCU)
+	rows := make([][]RawComponent, 0, rowCount)
+	for iMCURow := 0; iMCURow < rowCount; iMCURow++ {
+		rowComponents := make([]RawComponent, len(components))
+		for i, comp := range components {
+			rowsPerIMCU := d.rawComponentRowsPerIMCU(comp.Component, linesPerIMCU)
+			rowStart := iMCURow * rowsPerIMCU
+			rowEnd := rowStart + rowsPerIMCU
+			if rowStart > comp.Height {
+				rowStart = comp.Height
+			}
+			if rowEnd > comp.Height {
+				rowEnd = comp.Height
+			}
+			if rowEnd < rowStart {
+				rowEnd = rowStart
+			}
+			height := rowEnd - rowStart
+			pix := make([]byte, height*comp.Stride)
+			if height > 0 {
+				copy(pix, comp.Pix[rowStart*comp.Stride:rowEnd*comp.Stride])
+			}
+			rowComp := comp
+			rowComp.Height = height
+			rowComp.Pix = pix
+			rowComponents[i] = rowComp
+		}
+		rows = append(rows, rowComponents)
+	}
+	return rows
+}
+
+func (d *Decoder) rawComponentRowsPerIMCU(comp Component, linesPerIMCU int) int {
+	rows := comp.VSampFactor * comp.DCTVScaledSize
+	if rows > 0 {
+		return rows
+	}
+	if d.header.MaxVSampFactor > 0 && comp.VSampFactor > 0 {
+		rows = linesPerIMCU * comp.VSampFactor / d.header.MaxVSampFactor
+	}
+	if rows <= 0 {
+		rows = linesPerIMCU
+	}
+	return rows
 }
 
 // ReadCoefficients returns quantized DCT coefficient blocks for each component.
@@ -1472,7 +1812,11 @@ func (d *Decoder) OutputScanline() int {
 		return d.scaledNextRow
 	}
 	if d.rawBufferedRows != nil {
-		return d.rawBufferedNext * d.RawDataLinesPerIMCURow()
+		scanline := d.rawBufferedNext * d.RawDataLinesPerIMCURow()
+		if d.output.Height > 0 && scanline > d.output.Height {
+			return d.output.Height
+		}
+		return scanline
 	}
 	return d.dec.OutputScanline()
 }

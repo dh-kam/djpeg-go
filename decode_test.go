@@ -1671,6 +1671,97 @@ func TestDecoderBufferedRawDataRows(t *testing.T) {
 	}
 }
 
+func TestDecodeProgressiveRawComponents(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/test_progressive.jpg")
+	if err != nil {
+		t.Skipf("progressive fixture missing: %v", err)
+	}
+
+	all, cfg, err := djpeg.DecodeRawComponents(bytes.NewBuffer(data))
+	if err != nil {
+		t.Fatalf("DecodeRawComponents progressive non-seekable failed: %v", err)
+	}
+	if !cfg.Progressive || !cfg.RawDataOut {
+		t.Fatalf("progressive raw config = %+v, want progressive raw data output", cfg)
+	}
+	if len(all) != 3 {
+		t.Fatalf("progressive raw components = %d, want 3", len(all))
+	}
+	for i, comp := range all {
+		if comp.Width <= 0 || comp.Height <= 0 || comp.Stride < comp.Width || len(comp.Pix) != comp.Height*comp.Stride {
+			t.Fatalf("progressive raw component %d invalid: %dx%d stride %d len %d",
+				i, comp.Width, comp.Height, comp.Stride, len(comp.Pix))
+		}
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data), djpeg.WithRawDataOutput())
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader progressive raw failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress progressive raw failed: %v", err)
+	}
+	linesPerIMCU := dec.RawDataLinesPerIMCURow()
+	if linesPerIMCU <= 0 {
+		t.Fatalf("RawDataLinesPerIMCURow progressive = %d, want positive", linesPerIMCU)
+	}
+	if _, _, err := dec.ReadRawDataRows(linesPerIMCU - 1); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("ReadRawDataRows progressive small buffer error = %v, want ErrInvalidOption", err)
+	}
+	var assembled []djpeg.RawComponent
+	for dec.OutputScanline() < dec.OutputConfig().Height {
+		components, rows, err := dec.ReadRawDataRows(linesPerIMCU)
+		if err != nil {
+			t.Fatalf("ReadRawDataRows progressive failed: %v", err)
+		}
+		if rows == 0 {
+			break
+		}
+		assembled = appendRawComponentRows(assembled, components)
+	}
+	assertRawComponentsEqual(t, assembled, all, "progressive raw row replay")
+	if dec.OutputScanline() != dec.OutputConfig().Height {
+		t.Fatalf("OutputScanline progressive raw = %d, want %d",
+			dec.OutputScanline(), dec.OutputConfig().Height)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress progressive raw failed: %v", err)
+	}
+
+	buffered := djpeg.NewDecoder(bytes.NewReader(data), djpeg.WithRawDataOutput(), djpeg.WithBufferedImage())
+	if _, err := buffered.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader buffered progressive raw failed: %v", err)
+	}
+	if err := buffered.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress buffered progressive raw failed: %v", err)
+	}
+	if _, err := buffered.ReadRawData(); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("ReadRawData before StartOutput error = %v, want ErrInvalidOption", err)
+	}
+	if ok, err := buffered.StartOutput(buffered.InputScanNumber()); err != nil || !ok {
+		t.Fatalf("StartOutput buffered progressive raw ok=%v err=%v, want true nil", ok, err)
+	}
+	bufferedAll, err := buffered.ReadRawData()
+	if err != nil {
+		t.Fatalf("ReadRawData buffered progressive failed: %v", err)
+	}
+	assertRawComponentsEqual(t, bufferedAll, all, "buffered progressive raw")
+	if ok, err := buffered.FinishOutput(); err != nil || !ok {
+		t.Fatalf("FinishOutput buffered progressive raw ok=%v err=%v, want true nil", ok, err)
+	}
+	if err := buffered.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress buffered progressive raw failed: %v", err)
+	}
+
+	nonSeekable := djpeg.NewDecoder(bytes.NewBuffer(data), djpeg.WithRawDataOutput())
+	if _, err := nonSeekable.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader progressive raw non-seekable failed: %v", err)
+	}
+	if err := nonSeekable.StartDecompress(); !errors.Is(err, djpeg.ErrUnsupported) {
+		t.Fatalf("StartDecompress progressive raw non-seekable error = %v, want ErrUnsupported", err)
+	}
+}
+
 func appendRawComponentRows(dst, rows []djpeg.RawComponent) []djpeg.RawComponent {
 	if len(rows) == 0 {
 		return dst
