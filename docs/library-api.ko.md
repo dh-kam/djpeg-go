@@ -270,9 +270,11 @@ decoder는 raster와 raw component output 모두에서 libjpeg 스타일 scaled-
 output 경로를 사용합니다.
 
 `WithOutputGamma`와 `WithBlockSmoothing`은 libjpeg decompressor parameter에
-대응합니다. Progressive scanline output은 seek 가능한 input에서 pure Go fallback
-경로로 사용할 수 있으며, scaled 및 quantized raster output도 포함합니다.
-Progressive coefficient decoding은 아직 `ErrUnsupported`로 보고합니다.
+대응합니다. Progressive scanline output은 pure Go fallback 경로로 사용할 수 있으며,
+scaled 및 quantized raster output도 포함합니다. one-shot raster API는 필요 시
+non-seekable reader를 buffering하고, low-level `Decoder`의 progressive output은
+seek 가능한 input이 필요합니다. Progressive coefficient decoding은 아직
+`ErrUnsupported`로 보고합니다.
 
 ## Buffered-Image Output Pass
 
@@ -956,7 +958,7 @@ _ = img
 
 현재 progressive coefficient decoding은 지원하지 않습니다. Progressive header는
 `ReadHeader`와 `DecodeRasterConfig`로 조회할 수 있으며, progressive scanline은
-seek 가능한 input에서 사용할 수 있습니다.
+one-shot raster API와 seek 가능한 low-level decoder input에서 사용할 수 있습니다.
 
 ## CLI Flag와 API Option 대응
 
@@ -1016,8 +1018,9 @@ import libjpeg "github.com/dh-kam/djpeg-go"
 
 - baseline 및 extended sequential non-progressive JPEG가 지원 경로이며,
   Huffman과 arithmetic entropy coding을 지원합니다.
-- progressive JPEG header는 읽을 수 있지만 progressive scanline 및
-  coefficient decoding은 `ErrUnsupported`를 반환합니다.
+- progressive JPEG scanline은 one-shot raster API와 seek 가능한 low-level decoder
+  input에서 decode할 수 있습니다. Progressive coefficient decoding은
+  `ErrUnsupported`를 반환합니다.
 - `Decode`는 `image.Image` interface 뒤에 `*Raster`를 반환합니다. RGBA allocation을
   강제하지 않으면서 raw byte 접근을 유지하기 위한 선택입니다.
 - package는 `image.RegisterFormat`를 자동 호출하지 않습니다. 이 decoder의 parity

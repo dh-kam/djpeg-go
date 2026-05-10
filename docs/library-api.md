@@ -274,9 +274,11 @@ the libjpeg-style scaled-IDCT output path for both raster and raw component
 output.
 
 `WithOutputGamma` and `WithBlockSmoothing` mirror libjpeg decompressor
-parameters. Progressive scanline output is available for seekable inputs through
-a pure Go fallback path, including scaled and quantized raster output.
-Progressive coefficient decoding is still reported as `ErrUnsupported`.
+parameters. Progressive scanline output is available through a pure Go fallback
+path, including scaled and quantized raster output. One-shot raster APIs buffer
+non-seekable readers as needed; low-level `Decoder` progressive output requires
+a seekable input. Progressive coefficient decoding is still reported as
+`ErrUnsupported`.
 
 ## Buffered-Image Output Passes
 
@@ -965,7 +967,8 @@ _ = img
 
 Currently unsupported JPEG features include progressive coefficient decoding.
 Progressive headers can be inspected through `ReadHeader` and
-`DecodeRasterConfig`; progressive scanlines are available for seekable inputs.
+`DecodeRasterConfig`; progressive scanlines are available through one-shot
+raster APIs and seekable low-level decoder inputs.
 
 ## Mapping CLI Flags to API Options
 
@@ -1023,8 +1026,9 @@ package rules for external consumers.
 
 - Baseline and extended sequential non-progressive JPEGs are the supported
   paths, including Huffman and arithmetic entropy coding.
-- Progressive JPEG headers can be read, but progressive scanline and
-  coefficient decoding return `ErrUnsupported`.
+- Progressive JPEG scanlines can be decoded by one-shot raster APIs and seekable
+  low-level decoder inputs. Progressive coefficient decoding returns
+  `ErrUnsupported`.
 - `Decode` returns a `*Raster` behind the `image.Image` interface. This keeps
   raw bytes available without forcing an RGBA allocation.
 - The package does not call `image.RegisterFormat` automatically. Use

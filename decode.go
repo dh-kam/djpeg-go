@@ -1,6 +1,7 @@
 package djpeg
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"image"
@@ -119,6 +120,11 @@ func DecodeRasterWithOptions(r io.Reader, opts *Options) (*Raster, error) {
 	if options.RawDataOut {
 		return nil, fmt.Errorf("%w: raw data output requires DecodeRawComponents or Decoder.ReadRawData", ErrInvalidOption)
 	}
+	var err error
+	r, err = oneShotDecodeReader(r)
+	if err != nil {
+		return nil, err
+	}
 	dec := newDecoderWithOptions(r, options)
 	if _, err := dec.ReadHeader(); err != nil {
 		return nil, err
@@ -164,6 +170,17 @@ func DecodeRasterWithOptions(r io.Reader, opts *Options) (*Raster, error) {
 		return nil, err
 	}
 	return raster, nil
+}
+
+func oneShotDecodeReader(r io.Reader) (io.Reader, error) {
+	if _, ok := r.(io.ReadSeeker); ok {
+		return r, nil
+	}
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("%w: read JPEG input: %v", ErrInvalidJPEG, err)
+	}
+	return bytes.NewReader(data), nil
 }
 
 // DecodeRawComponents decodes JPEG samples into downsampled component planes

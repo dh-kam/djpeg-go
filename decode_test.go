@@ -3186,9 +3186,21 @@ func TestDecodeProgressiveRaster(t *testing.T) {
 			quantized.Format, len(quantized.Palette))
 	}
 
-	_, err = djpeg.DecodeRaster(bytes.NewBuffer(data))
-	if !errors.Is(err, djpeg.ErrUnsupported) {
-		t.Fatalf("DecodeRaster progressive non-seekable error = %v, want ErrUnsupported", err)
+	nonSeekable, err := djpeg.DecodeRaster(bytes.NewBuffer(data))
+	if err != nil {
+		t.Fatalf("DecodeRaster progressive non-seekable failed: %v", err)
+	}
+	if nonSeekable.Rect.Dx() != cfg.Width || nonSeekable.Rect.Dy() != cfg.Height {
+		t.Fatalf("DecodeRaster progressive non-seekable = %dx%d, want %dx%d",
+			nonSeekable.Rect.Dx(), nonSeekable.Rect.Dy(), cfg.Width, cfg.Height)
+	}
+
+	dec := djpeg.NewDecoder(bytes.NewBuffer(data))
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader progressive non-seekable failed: %v", err)
+	}
+	if err := dec.StartDecompress(); !errors.Is(err, djpeg.ErrUnsupported) {
+		t.Fatalf("StartDecompress progressive non-seekable error = %v, want ErrUnsupported", err)
 	}
 }
 

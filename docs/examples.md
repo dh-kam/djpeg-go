@@ -321,6 +321,6 @@ scripts/perf_compare.py \
 
 The latest report is in [performance.md](performance.md).
 
-Sequential arithmetic-coded JPEG files are supported. Progressive JPEG headers
-can be inspected, but progressive scanline and coefficient decoding are
-currently rejected by the decoder.
+Sequential arithmetic-coded JPEG files are supported. Progressive JPEG scanline
+output is supported by one-shot raster APIs and seekable low-level decoder
+inputs. Progressive coefficient decoding is still rejected by the decoder.
