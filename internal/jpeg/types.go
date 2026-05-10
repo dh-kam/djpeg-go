@@ -389,7 +389,13 @@ func (s *SourceManager) GetByte() int {
 
 // Consume removes n bytes from the front of the buffer.
 func (s *SourceManager) Consume(n int) {
+	if n <= 0 {
+		return
+	}
 	s.nextIdx += n
+	if s.nextIdx > len(s.NextInputByte) {
+		s.nextIdx = len(s.NextInputByte)
+	}
 }
 
 // ResetBuffer resets the internal buffer tracking after a FillInputBuffer call.

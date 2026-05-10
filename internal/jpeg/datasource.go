@@ -162,22 +162,25 @@ func (ds *DataSource) PeekBytes(n int) []byte {
 // from an io.Reader. This replaces the C jpeg_stdio_src function.
 func SetupSource(cinfo *JPEGDecompress, r io.Reader) {
 	ds := NewDataSource(r)
-	cinfo.Src = &SourceManager{
-		InitSource: func(cinfo *JPEGDecompress) {
-			// Reset for new image from same source
-			ds.eofSeen = false
-		},
-		FillInputBuffer: func(cinfo *JPEGDecompress) bool {
-			return ds.FillBuffer(cinfo)
-		},
-		SkipInputData: func(cinfo *JPEGDecompress, numBytes int64) {
-			ds.SkipData(cinfo, numBytes)
-		},
-		ResyncToRestart: JPEGResyncToRestart,
-		TermSource: func(cinfo *JPEGDecompress) {
-			// No work needed
-		},
+	sm := &SourceManager{}
+	sm.InitSource = func(cinfo *JPEGDecompress) {
+		ds.eofSeen = false
+		sm.ResetBuffer(nil)
 	}
+	sm.FillInputBuffer = func(cinfo *JPEGDecompress) bool {
+		if !ds.FillBuffer(cinfo) {
+			return false
+		}
+		return resetSourceManagerFromDataSource(sm, ds)
+	}
+	sm.SkipInputData = func(cinfo *JPEGDecompress, numBytes int64) {
+		skipSourceManagerInput(cinfo, sm, numBytes)
+	}
+	sm.ResyncToRestart = JPEGResyncToRestart
+	sm.TermSource = func(cinfo *JPEGDecompress) {
+		// No work needed
+	}
+	cinfo.Src = sm
 }
 
 // SetupMemSource initializes the SourceManager from a byte slice.
@@ -187,20 +190,61 @@ func SetupMemSource(cinfo *JPEGDecompress, data []byte) {
 		ErrExitDecompress(cinfo, ErrInputEmpty)
 	}
 	ds := NewDataSourceFromBytes(data)
-	cinfo.Src = &SourceManager{
-		InitSource: func(cinfo *JPEGDecompress) {
-			// No work needed for memory source
-		},
-		FillInputBuffer: func(cinfo *JPEGDecompress) bool {
-			return ds.FillBuffer(cinfo)
-		},
-		SkipInputData: func(cinfo *JPEGDecompress, numBytes int64) {
-			ds.SkipData(cinfo, numBytes)
-		},
-		ResyncToRestart: JPEGResyncToRestart,
-		TermSource: func(cinfo *JPEGDecompress) {
-			// No work needed
-		},
+	sm := &SourceManager{}
+	resetSourceManagerFromDataSource(sm, ds)
+	sm.InitSource = func(cinfo *JPEGDecompress) {
+		// No work needed for memory source
+	}
+	sm.FillInputBuffer = func(cinfo *JPEGDecompress) bool {
+		if !ds.FillBuffer(cinfo) {
+			return false
+		}
+		return resetSourceManagerFromDataSource(sm, ds)
+	}
+	sm.SkipInputData = func(cinfo *JPEGDecompress, numBytes int64) {
+		skipSourceManagerInput(cinfo, sm, numBytes)
+	}
+	sm.ResyncToRestart = JPEGResyncToRestart
+	sm.TermSource = func(cinfo *JPEGDecompress) {
+		// No work needed
+	}
+	cinfo.Src = sm
+}
+
+func resetSourceManagerFromDataSource(sm *SourceManager, ds *DataSource) bool {
+	if ds.avail <= 0 {
+		sm.ResetBuffer(nil)
+		return false
+	}
+	start := ds.startPos
+	end := start + ds.avail
+	sm.ResetBuffer(ds.buffer[start:end])
+	ds.startPos = end
+	ds.avail = 0
+	return sm.BytesInBuffer() > 0
+}
+
+func skipSourceManagerInput(cinfo *JPEGDecompress, sm *SourceManager, numBytes int64) {
+	if numBytes <= 0 {
+		return
+	}
+	for numBytes > 0 {
+		avail := sm.BytesInBuffer()
+		if avail <= 0 {
+			if sm.FillInputBuffer == nil || !sm.FillInputBuffer(cinfo) {
+				return
+			}
+			avail = sm.BytesInBuffer()
+			if avail <= 0 {
+				return
+			}
+		}
+		toSkip := int64(avail)
+		if toSkip > numBytes {
+			toSkip = numBytes
+		}
+		sm.Consume(int(toSkip))
+		numBytes -= toSkip
 	}
 }
 
@@ -212,9 +256,108 @@ func SetupMemSource(cinfo *JPEGDecompress, data []byte) {
 // encountering an unexpected marker. This is the default implementation
 // that replaces the C jpeg_resync_to_restart function.
 func JPEGResyncToRestart(cinfo *JPEGDecompress, desired int) bool {
-	// This is a simplified version. The full C version has complex logic
-	// for handling restart marker resynchronization. For now, we just
-	// warn and return false (indicating we couldn't resync).
-	WarnMSDecompress(cinfo, WrnMustResync)
-	return false
+	marker := cinfo.UnreadMarker
+	action := 1
+
+	WarnMSDecompress(cinfo, WrnMustResync, marker, desired)
+	for {
+		switch {
+		case marker < markerSOF0:
+			action = 2
+		case marker < JPEGRst0 || marker > markerRST7:
+			action = 3
+		default:
+			switch marker {
+			case JPEGRst0 + ((desired + 1) & 7), JPEGRst0 + ((desired + 2) & 7):
+				action = 3
+			case JPEGRst0 + ((desired - 1) & 7), JPEGRst0 + ((desired - 2) & 7):
+				action = 2
+			default:
+				action = 1
+			}
+		}
+		TraceMS(&cinfo.JPEGCommon, 4, TrcRecoveryAction, marker, action)
+
+		switch action {
+		case 1:
+			cinfo.UnreadMarker = 0
+			return true
+		case 2:
+			if !nextSourceMarker(cinfo) {
+				return false
+			}
+			marker = cinfo.UnreadMarker
+		case 3:
+			return true
+		}
+	}
+}
+
+const (
+	markerSOF0 = 0xC0
+	markerRST7 = JPEGRst0 + 7
+)
+
+func nextSourceMarker(cinfo *JPEGDecompress) bool {
+	var discarded uint
+	if cinfo.Marker != nil {
+		discarded = cinfo.Marker.DiscardedBytes()
+	}
+
+	for {
+		c, ok := readSourceByte(cinfo)
+		if !ok {
+			return false
+		}
+		for c != 0xFF {
+			discarded++
+			setMarkerDiscardedBytes(cinfo, discarded)
+			c, ok = readSourceByte(cinfo)
+			if !ok {
+				return false
+			}
+		}
+		for {
+			c, ok = readSourceByte(cinfo)
+			if !ok {
+				return false
+			}
+			if c != 0xFF {
+				break
+			}
+		}
+		if c != 0 {
+			if discarded != 0 {
+				WarnMSDecompress(cinfo, WrnExtraneousData, int(discarded), int(c))
+				discarded = 0
+				setMarkerDiscardedBytes(cinfo, 0)
+			}
+			cinfo.UnreadMarker = int(c)
+			return true
+		}
+		discarded += 2
+		setMarkerDiscardedBytes(cinfo, discarded)
+	}
+}
+
+func readSourceByte(cinfo *JPEGDecompress) (byte, bool) {
+	if cinfo == nil || cinfo.Src == nil {
+		return 0, false
+	}
+	src := cinfo.Src
+	for {
+		b := src.GetByte()
+		if b >= 0 {
+			return byte(b), true
+		}
+		if src.FillInputBuffer == nil || !src.FillInputBuffer(cinfo) {
+			return 0, false
+		}
+	}
+}
+
+func setMarkerDiscardedBytes(cinfo *JPEGDecompress, discarded uint) {
+	if cinfo.Marker != nil {
+		cinfo.Marker.SetDiscardedBytes(discarded)
+	}
 }
