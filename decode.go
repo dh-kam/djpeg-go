@@ -282,8 +282,6 @@ type Decoder struct {
 	palette         color.Palette
 	internalDone    bool
 	started         bool
-	source          io.ReadSeeker
-	sourceOffset    int64
 	outputPass      bool
 	inputScan       int
 	outputScan      int
@@ -299,17 +297,10 @@ func NewDecoder(r io.Reader, opts ...Option) *Decoder {
 }
 
 func newDecoderWithOptions(r io.Reader, opts Options) *Decoder {
-	dec := &Decoder{
+	return &Decoder{
 		dec:  internaldecoder.New(r),
 		opts: opts,
 	}
-	if seeker, ok := r.(io.ReadSeeker); ok {
-		if offset, err := seeker.Seek(0, io.SeekCurrent); err == nil {
-			dec.source = seeker
-			dec.sourceOffset = offset
-		}
-	}
-	return dec
 }
 
 // ReadHeader reads JPEG metadata.
@@ -916,9 +907,25 @@ func (d *Decoder) FinishDecompress() error {
 
 // Abort stops the current decompression operation and clears decoder-owned
 // output state. It mirrors libjpeg's jpeg_abort_decompress behavior at the
-// public facade level; the caller must provide a new reader to decode again.
+// public facade level.
 func (d *Decoder) Abort() {
 	d.dec.Abort()
+	d.clearPublicState()
+}
+
+// SetSource replaces the JPEG input reader and clears decoder-owned output
+// state. It lets a low-level Decoder instance be reused after Abort or Finish
+// while preserving its configured Options.
+func (d *Decoder) SetSource(r io.Reader) error {
+	if r == nil {
+		return fmt.Errorf("%w: source reader must not be nil", ErrInvalidOption)
+	}
+	d.dec = internaldecoder.New(r)
+	d.clearPublicState()
+	return nil
+}
+
+func (d *Decoder) clearPublicState() {
 	d.header = Config{}
 	d.output = Config{}
 	d.scaled = nil

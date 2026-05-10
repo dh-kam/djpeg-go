@@ -2630,6 +2630,31 @@ func TestDecoderStateMethodsAndAbort(t *testing.T) {
 	if dec.InputComplete() || dec.HasMultipleScans() || dec.IsBaseline() {
 		t.Fatal("Abort should clear public JPEG state")
 	}
+
+	colorData, err := os.ReadFile("tests/testdata/test_color.jpg")
+	if err != nil {
+		t.Skipf("color fixture missing: %v", err)
+	}
+	if err := dec.SetSource(bytes.NewReader(colorData)); err != nil {
+		t.Fatalf("SetSource after Abort failed: %v", err)
+	}
+	cfg, err = dec.ReadHeader()
+	if err != nil {
+		t.Fatalf("ReadHeader after SetSource failed: %v", err)
+	}
+	if cfg.PixelFormat != djpeg.PixelFormatRGB24 || cfg.Width <= 0 || cfg.Height <= 0 {
+		t.Fatalf("config after SetSource = %+v, want color raster config", cfg)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress after SetSource failed: %v", err)
+	}
+	row = make([]byte, dec.OutputConfig().Stride)
+	if n, err := dec.ReadScanlines([][]byte{row}); err != nil || n != 1 {
+		t.Fatalf("ReadScanlines after SetSource rows=%d err=%v, want 1 nil", n, err)
+	}
+	if err := dec.SetSource(nil); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("SetSource nil error = %v, want ErrInvalidOption", err)
+	}
 }
 
 func TestSavedMarkersInvalidMarkerCode(t *testing.T) {

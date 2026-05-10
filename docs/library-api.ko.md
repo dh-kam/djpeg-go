@@ -663,10 +663,14 @@ _ = dec.ScanParameters()
 ```
 
 `Abort`는 현재 decompression operation을 중단하고 public decoder state를
-초기화합니다. 다른 stream을 디코딩하려면 새 reader로 decoder를 새로 만드세요.
+초기화합니다. `SetSource`는 input reader를 교체하므로, 설정된 option을 유지한 채
+같은 decoder instance를 재사용할 수 있습니다.
 
 ```go
 dec.Abort()
+if err := dec.SetSource(nextReader); err != nil {
+	return err
+}
 ```
 
 ## Saved Markers
