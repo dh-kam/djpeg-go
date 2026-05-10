@@ -473,7 +473,10 @@ for dec.OutputScanline() < dec.OutputConfig().Height {
 
 Raw component output은 quantized output과 함께 사용할 수 없습니다. `WithScale`은
 raw mode에서 libjpeg 호환 DCT-scaled output dimension으로 지원하며, post-decode
-resize는 적용하지 않습니다.
+resize는 적용하지 않습니다. `WithBufferedImage`는 raw output과 함께 사용할 수
+있습니다. `ReadRawData` 또는 `ReadRawDataRows` 전에 `StartOutput`을 호출하고,
+`FinishDecompress` 전에 `FinishOutput`을 호출합니다. 이후 `StartOutput`을 다시
+호출하면 buffered raw component row를 재출력합니다.
 
 ## Compatibility Mode
 

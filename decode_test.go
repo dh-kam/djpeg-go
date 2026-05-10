@@ -347,8 +347,26 @@ func TestDecoderMutableRawAndBufferedParameters(t *testing.T) {
 	if err := buffered.SetBufferedImage(true); err != nil {
 		t.Fatalf("SetBufferedImage failed: %v", err)
 	}
-	if err := buffered.SetRawDataOutput(true); !errors.Is(err, djpeg.ErrUnsupported) {
-		t.Fatalf("SetRawDataOutput with buffered image error = %v, want ErrUnsupported", err)
+	if err := buffered.SetRawDataOutput(true); err != nil {
+		t.Fatalf("SetRawDataOutput with buffered image failed: %v", err)
+	}
+	if err := buffered.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress buffered raw failed: %v", err)
+	}
+	if _, err := buffered.ReadRawData(); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("ReadRawData before StartOutput error = %v, want ErrInvalidOption", err)
+	}
+	if ok, err := buffered.StartOutput(buffered.InputScanNumber()); err != nil || !ok {
+		t.Fatalf("StartOutput buffered raw ok=%v err=%v, want true nil", ok, err)
+	}
+	if _, err := buffered.ReadRawData(); err != nil {
+		t.Fatalf("ReadRawData buffered raw failed: %v", err)
+	}
+	if ok, err := buffered.FinishOutput(); err != nil || !ok {
+		t.Fatalf("FinishOutput buffered raw ok=%v err=%v, want true nil", ok, err)
+	}
+	if err := buffered.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress buffered raw failed: %v", err)
 	}
 
 	invalid := djpeg.NewDecoder(bytes.NewReader(data))
@@ -1577,6 +1595,114 @@ func TestDecoderRawDataRows(t *testing.T) {
 	}
 	if err := dec.FinishDecompress(); err != nil {
 		t.Fatalf("FinishDecompress raw rows failed: %v", err)
+	}
+}
+
+func TestDecoderBufferedRawDataRows(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/test_420.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+
+	all, refCfg, err := djpeg.DecodeRawComponents(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeRawComponents reference failed: %v", err)
+	}
+	bufferedAll, bufferedCfg, err := djpeg.DecodeRawComponents(bytes.NewReader(data), djpeg.WithBufferedImage())
+	if err != nil {
+		t.Fatalf("DecodeRawComponents buffered failed: %v", err)
+	}
+	if !bufferedCfg.BufferedImage || !bufferedCfg.RawDataOut {
+		t.Fatalf("buffered raw config = %+v, want buffered raw data output", bufferedCfg)
+	}
+	assertRawComponentsEqual(t, bufferedAll, all, "buffered all-at-once")
+
+	dec := djpeg.NewDecoder(bytes.NewReader(data), djpeg.WithRawDataOutput(), djpeg.WithBufferedImage())
+	if _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader buffered raw rows failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress buffered raw rows failed: %v", err)
+	}
+	linesPerIMCU := dec.RawDataLinesPerIMCURow()
+	if linesPerIMCU != refCfg.MaxVSampFactor*refCfg.MinDCTVScaledSize {
+		t.Fatalf("RawDataLinesPerIMCURow = %d, want %d",
+			linesPerIMCU, refCfg.MaxVSampFactor*refCfg.MinDCTVScaledSize)
+	}
+	if _, _, err := dec.ReadRawDataRows(linesPerIMCU); !errors.Is(err, djpeg.ErrInvalidOption) {
+		t.Fatalf("ReadRawDataRows before StartOutput error = %v, want ErrInvalidOption", err)
+	}
+	if ok, err := dec.StartOutput(dec.InputScanNumber()); err != nil || !ok {
+		t.Fatalf("StartOutput buffered raw rows ok=%v err=%v, want true nil", ok, err)
+	}
+	var assembled []djpeg.RawComponent
+	for dec.OutputScanline() < dec.OutputConfig().Height {
+		components, rows, err := dec.ReadRawDataRows(linesPerIMCU)
+		if err != nil {
+			t.Fatalf("ReadRawDataRows buffered failed: %v", err)
+		}
+		if rows == 0 {
+			break
+		}
+		assembled = appendRawComponentRows(assembled, components)
+	}
+	assertRawComponentsEqual(t, assembled, all, "buffered row replay")
+	if ok, err := dec.FinishOutput(); err != nil || !ok {
+		t.Fatalf("FinishOutput buffered raw rows ok=%v err=%v, want true nil", ok, err)
+	}
+
+	if ok, err := dec.StartOutput(dec.InputScanNumber()); err != nil || !ok {
+		t.Fatalf("second StartOutput buffered raw rows ok=%v err=%v, want true nil", ok, err)
+	}
+	secondPass, err := dec.ReadRawData()
+	if err != nil {
+		t.Fatalf("ReadRawData second buffered pass failed: %v", err)
+	}
+	assertRawComponentsEqual(t, secondPass, all, "buffered second pass")
+	if dec.OutputScanline() != dec.OutputConfig().Height {
+		t.Fatalf("OutputScanline after buffered ReadRawData = %d, want %d",
+			dec.OutputScanline(), dec.OutputConfig().Height)
+	}
+	if ok, err := dec.FinishOutput(); err != nil || !ok {
+		t.Fatalf("second FinishOutput buffered raw rows ok=%v err=%v, want true nil", ok, err)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress buffered raw rows failed: %v", err)
+	}
+}
+
+func appendRawComponentRows(dst, rows []djpeg.RawComponent) []djpeg.RawComponent {
+	if len(rows) == 0 {
+		return dst
+	}
+	if len(dst) == 0 {
+		dst = make([]djpeg.RawComponent, len(rows))
+		for i, row := range rows {
+			dst[i] = row
+			dst[i].Pix = append([]byte(nil), row.Pix...)
+		}
+		return dst
+	}
+	for i, row := range rows {
+		dst[i].Pix = append(dst[i].Pix, row.Pix...)
+		dst[i].Height += row.Height
+	}
+	return dst
+}
+
+func assertRawComponentsEqual(t *testing.T, got, want []djpeg.RawComponent, label string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s components = %d, want %d", label, len(got), len(want))
+	}
+	for i := range got {
+		if got[i].Width != want[i].Width || got[i].Height != want[i].Height ||
+			got[i].Stride != want[i].Stride || !bytes.Equal(got[i].Pix, want[i].Pix) {
+			t.Fatalf("%s component %d differs: got %dx%d stride %d len %d, want %dx%d stride %d len %d",
+				label, i,
+				got[i].Width, got[i].Height, got[i].Stride, len(got[i].Pix),
+				want[i].Width, want[i].Height, want[i].Stride, len(want[i].Pix))
+		}
 	}
 }
 

@@ -185,11 +185,25 @@ func DecodeRawComponentsWithOptions(r io.Reader, opts *Options) ([]RawComponent,
 	if err := dec.StartDecompress(); err != nil {
 		return nil, Config{}, err
 	}
+	if options.BufferedImage {
+		if ok, err := dec.StartOutput(dec.InputScanNumber()); err != nil {
+			return nil, Config{}, err
+		} else if !ok {
+			return nil, Config{}, fmt.Errorf("%w: buffered raw output suspended", ErrInvalidOption)
+		}
+	}
 	components, err := dec.ReadRawData()
 	if err != nil {
 		return nil, Config{}, err
 	}
 	cfg := dec.OutputConfig()
+	if options.BufferedImage {
+		if ok, err := dec.FinishOutput(); err != nil {
+			return nil, Config{}, err
+		} else if !ok {
+			return nil, Config{}, fmt.Errorf("%w: buffered raw output suspended", ErrInvalidOption)
+		}
+	}
 	if err := dec.FinishDecompress(); err != nil {
 		return nil, Config{}, err
 	}
@@ -233,23 +247,26 @@ func DecodeRasterConfigWithOptions(r io.Reader, opts *Options) (Config, error) {
 // Decoder exposes a low-level scanline-oriented public API without leaking
 // internal decoder types.
 type Decoder struct {
-	dec           *internaldecoder.Decoder
-	opts          Options
-	header        Config
-	output        Config
-	scaled        *Raster
-	scaledNextRow int
-	quantSource   *Raster
-	palette       color.Palette
-	internalDone  bool
-	started       bool
-	outputPass    bool
-	inputScan     int
-	outputScan    int
-	inputComplete bool
-	cropActive    bool
-	cropX         int
-	cropWidth     int
+	dec             *internaldecoder.Decoder
+	opts            Options
+	header          Config
+	output          Config
+	scaled          *Raster
+	scaledNextRow   int
+	rawBufferedRows [][]RawComponent
+	rawBufferedAll  []RawComponent
+	rawBufferedNext int
+	quantSource     *Raster
+	palette         color.Palette
+	internalDone    bool
+	started         bool
+	outputPass      bool
+	inputScan       int
+	outputScan      int
+	inputComplete   bool
+	cropActive      bool
+	cropX           int
+	cropWidth       int
 }
 
 // NewDecoder creates a decoder for r.
@@ -362,6 +379,9 @@ func (d *Decoder) Start() error {
 	}
 	d.populateHeaderMetadata(&baseOutput)
 	d.output = baseOutput
+	d.rawBufferedRows = nil
+	d.rawBufferedAll = nil
+	d.rawBufferedNext = 0
 	scaleHandledByDecoder, err := d.scaleHandledByDecoder()
 	if err != nil {
 		return err
@@ -406,7 +426,12 @@ func (d *Decoder) Start() error {
 		d.quantSource = nil
 		d.palette = nil
 	}
-	if d.opts.BufferedImage && d.scaled == nil {
+	if d.opts.BufferedImage && d.opts.RawDataOut {
+		if err := d.bufferRawDataOutput(); err != nil {
+			return err
+		}
+	}
+	if d.opts.BufferedImage && !d.opts.RawDataOut && d.scaled == nil {
 		scaled, err := d.readAndScaleStartedDecoder(baseOutput, d.output.Width, d.output.Height)
 		if err != nil {
 			return err
@@ -528,7 +553,14 @@ func (d *Decoder) ReadRawData() ([]RawComponent, error) {
 	if !d.started {
 		return nil, fmt.Errorf("%w: StartDecompress must be called before ReadRawData", ErrInvalidOption)
 	}
+	if d.opts.BufferedImage && !d.outputPass {
+		return nil, fmt.Errorf("%w: buffered raw data output requires StartOutput", ErrInvalidOption)
+	}
 	d.reportProgress(d.OutputScanline(), d.OutputConfig().Height)
+	if d.rawBufferedRows != nil {
+		d.rawBufferedNext = len(d.rawBufferedRows)
+		return cloneRawComponents(d.rawBufferedAll), nil
+	}
 	internal, err := d.dec.ReadRawData()
 	if err != nil {
 		return nil, wrapDecodeError("read raw data", err)
@@ -557,16 +589,48 @@ func (d *Decoder) ReadRawDataRows(maxLines int) ([]RawComponent, int, error) {
 	if !d.started {
 		return nil, 0, fmt.Errorf("%w: StartDecompress must be called before ReadRawDataRows", ErrInvalidOption)
 	}
+	if d.opts.BufferedImage && !d.outputPass {
+		return nil, 0, fmt.Errorf("%w: buffered raw data output requires StartOutput", ErrInvalidOption)
+	}
 	linesPerIMCU := d.RawDataLinesPerIMCURow()
 	if maxLines < linesPerIMCU {
 		return nil, 0, fmt.Errorf("%w: raw data maxLines=%d, want at least %d", ErrInvalidOption, maxLines, linesPerIMCU)
 	}
 	d.reportProgress(d.OutputScanline(), d.OutputConfig().Height)
+	if d.rawBufferedRows != nil {
+		if d.rawBufferedNext >= len(d.rawBufferedRows) {
+			return nil, 0, nil
+		}
+		components := cloneRawComponents(d.rawBufferedRows[d.rawBufferedNext])
+		d.rawBufferedNext++
+		return components, linesPerIMCU, nil
+	}
 	internal, rows, err := d.dec.ReadRawDataRows(maxLines)
 	if err != nil {
 		return nil, rows, wrapDecodeError("read raw data", err)
 	}
 	return convertRawComponents(internal), rows, nil
+}
+
+func (d *Decoder) bufferRawDataOutput() error {
+	linesPerIMCU := d.RawDataLinesPerIMCURow()
+	if linesPerIMCU <= 0 {
+		return fmt.Errorf("%w: invalid raw data iMCU row height %d", ErrInvalidOption, linesPerIMCU)
+	}
+	for d.dec.OutputScanline() < d.dec.OutputHeight() {
+		internal, rows, err := d.dec.ReadRawDataRows(linesPerIMCU)
+		if err != nil {
+			return wrapDecodeError("buffer raw data", err)
+		}
+		if rows == 0 {
+			break
+		}
+		components := convertRawComponents(internal)
+		d.rawBufferedRows = append(d.rawBufferedRows, components)
+		d.rawBufferedAll = appendRawComponents(d.rawBufferedAll, components)
+	}
+	d.rawBufferedNext = 0
+	return nil
 }
 
 func convertRawComponents(internal []internaldecoder.RawComponent) []RawComponent {
@@ -586,6 +650,43 @@ func convertRawComponents(internal []internaldecoder.RawComponent) []RawComponen
 		}
 	}
 	return out
+}
+
+func cloneRawComponents(components []RawComponent) []RawComponent {
+	if len(components) == 0 {
+		return nil
+	}
+	out := make([]RawComponent, len(components))
+	for i, comp := range components {
+		out[i] = comp
+		out[i].Pix = append([]byte(nil), comp.Pix...)
+	}
+	return out
+}
+
+func appendRawComponents(dst, rows []RawComponent) []RawComponent {
+	if len(rows) == 0 {
+		return dst
+	}
+	if len(dst) == 0 {
+		dst = make([]RawComponent, len(rows))
+		for i, row := range rows {
+			dst[i] = row
+			dst[i].Pix = append([]byte(nil), row.Pix...)
+		}
+		return dst
+	}
+	for i, row := range rows {
+		if i >= len(dst) {
+			next := row
+			next.Pix = append([]byte(nil), row.Pix...)
+			dst = append(dst, next)
+			continue
+		}
+		dst[i].Pix = append(dst[i].Pix, row.Pix...)
+		dst[i].Height += row.Height
+	}
+	return dst
 }
 
 // ReadCoefficients returns quantized DCT coefficient blocks for each component.
@@ -730,6 +831,9 @@ func (d *Decoder) Abort() {
 	d.output = Config{}
 	d.scaled = nil
 	d.scaledNextRow = 0
+	d.rawBufferedRows = nil
+	d.rawBufferedAll = nil
+	d.rawBufferedNext = 0
 	d.quantSource = nil
 	d.palette = nil
 	d.internalDone = false
@@ -751,7 +855,7 @@ func (d *Decoder) StartOutput(scanNumber int) (bool, error) {
 	if !d.opts.BufferedImage {
 		return false, fmt.Errorf("%w: StartOutput requires WithBufferedImage", ErrInvalidOption)
 	}
-	if !d.started || d.scaled == nil {
+	if !d.started || d.scaled == nil && d.rawBufferedRows == nil {
 		return false, fmt.Errorf("%w: StartDecompress must be called before StartOutput", ErrInvalidOption)
 	}
 	if d.outputPass {
@@ -766,6 +870,7 @@ func (d *Decoder) StartOutput(scanNumber int) (bool, error) {
 	}
 	d.outputScan = scanNumber
 	d.scaledNextRow = 0
+	d.rawBufferedNext = 0
 	d.outputPass = true
 	return true, nil
 }
@@ -1233,6 +1338,9 @@ func (d *Decoder) Header() Config {
 func (d *Decoder) OutputScanline() int {
 	if d.scaled != nil {
 		return d.scaledNextRow
+	}
+	if d.rawBufferedRows != nil {
+		return d.rawBufferedNext * d.RawDataLinesPerIMCURow()
 	}
 	return d.dec.OutputScanline()
 }
@@ -1777,9 +1885,6 @@ func (d *Decoder) validateRawDataOptions() error {
 	}
 	if d.quantizationRequested() {
 		return fmt.Errorf("%w: raw data output cannot be combined with quantized output", ErrInvalidOption)
-	}
-	if d.opts.BufferedImage {
-		return fmt.Errorf("%w: raw data output with buffered image mode is not supported", ErrUnsupported)
 	}
 	if _, _, err := d.opts.scaleSize(); err != nil {
 		return err
