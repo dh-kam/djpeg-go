@@ -18,25 +18,26 @@ package color
 // CoefController manages coefficient buffering and IDCT scheduling.
 type CoefController struct {
 	// Current MCU position (input side)
-	MCUCtr          int // counts MCUs processed in current row
-	MCUVertOffset   int // counts MCU rows within iMCU row
-	MCURowsPerIMCU  int // number of MCU rows per iMCU row
+	MCUCtr         int // counts MCUs processed in current row
+	MCUVertOffset  int // counts MCU rows within iMCU row
+	MCURowsPerIMCU int // number of MCU rows per iMCU row
 
 	// MCU buffer: pointers to coefficient blocks for the current MCU
-	MCUBuffer       [][]int16 // [DMaxBlocksInMCU][DCTSize2]
-	BlkBuffer       []int16   // flat backing storage
+	MCUBuffer [][]int16 // [DMaxBlocksInMCU][DCTSize2]
+	BlkBuffer []int16   // flat backing storage
 
 	// Virtual arrays for progressive mode (per-component)
 	// Each component has a 3D array: [blockRow][blockCol][DCTSize2]
-	WholeImage      [][][][]int16 // [component][blockRow][blockCol][DCTSize2]
+	WholeImage [][][][]int16 // [component][blockRow][blockCol][DCTSize2]
 
 	// Block smoothing state
-	CoefBitsLatch   []int // latched coefficient precision bits
+	CoefBitsLatch    []int // latched coefficient precision bits
 	DoBlockSmoothing bool
 
 	// Function pointers for decode and decompress
 	ConsumeData    func(info *DecompressInfo, decodeMCU func() bool) int
 	DecompressData func(info *DecompressInfo, outputBuf [][][]byte) int
+	DecodeMCU      func(info *DecompressInfo, mcuBuffer [][]int16) bool
 
 	// Whether using full-image buffering (progressive mode)
 	UseFullBuffer bool
@@ -138,15 +139,12 @@ func (cc *CoefController) decompressOnePass(
 	// Process each MCU row within this iMCU row
 	for yoffset := cc.MCUVertOffset; yoffset < cc.MCURowsPerIMCU; yoffset++ {
 		for mcuCol := cc.MCUCtr; mcuCol <= lastMCUCol; mcuCol++ {
-			// Zero the MCU buffer
-			for i := range cc.BlkBuffer {
-				cc.BlkBuffer[i] = 0
+			cc.zeroMCUBuffer(info)
+			if cc.DecodeMCU != nil && !cc.DecodeMCU(info, cc.MCUBuffer) {
+				cc.MCUVertOffset = yoffset
+				cc.MCUCtr = mcuCol
+				return JPEGSuspended
 			}
-
-			// The caller must have set up the decodeMCU callback.
-			// In this port, we return suspended and the caller drives decode.
-			// For now, the outer loop handles decode_mcu.
-			// This function is called AFTER the MCU has been decoded into MCUBuffer.
 
 			// Route decoded blocks to output buffers via IDCT
 			cc.routeBlocksToOutput(info, outputBuf, mcuCol, yoffset, lastMCUCol, lastIMCURow)
@@ -162,6 +160,19 @@ func (cc *CoefController) decompressOnePass(
 		return JPEGRowCompleted
 	}
 	return JPEGScanCompleted
+}
+
+func (cc *CoefController) zeroMCUBuffer(info *DecompressInfo) {
+	blocks := info.BlocksInMCU
+	if blocks <= 0 || blocks > len(cc.MCUBuffer) {
+		blocks = len(cc.MCUBuffer)
+	}
+	for bi := 0; bi < blocks; bi++ {
+		block := cc.MCUBuffer[bi]
+		for i := range block {
+			block[i] = 0
+		}
+	}
 }
 
 // routeBlocksToOutput dispatches decoded DCT blocks to IDCT and output.
@@ -192,12 +203,13 @@ func (cc *CoefController) routeBlocksToOutput(
 			if info.InputIMCURow < lastIMCURow ||
 				yoffset+yindex < compptr.LastRowHeight {
 				outputCol := startCol
+				outputRows := outputPtr[(yoffset+yindex)*compptr.DCTVScalSize:]
 				for xindex := 0; xindex < usefulWidth; xindex++ {
 					// Apply IDCT to the block
 					if info.IDCTFunc != nil {
 						info.IDCTFunc(compptr.ComponentIndex, compptr,
 							cc.MCUBuffer[blkIdx+xindex],
-							outputPtr, outputCol)
+							outputRows, outputCol)
 					}
 					outputCol += compptr.DCTHScalSize
 				}
@@ -291,12 +303,13 @@ func (cc *CoefController) decompressData(
 		for blockRow := 0; blockRow < blockRows; blockRow++ {
 			row := baseRow + blockRow
 			outputCol := 0
+			outputRows := outputPtr[blockRow*compptr.DCTVScalSize:]
 			for blockNum := 0; blockNum < compptr.WidthInBlocks; blockNum++ {
 				if info.IDCTFunc != nil && row < len(cc.WholeImage[ci]) &&
 					blockNum < len(cc.WholeImage[ci][row]) {
 					info.IDCTFunc(ci, compptr,
 						cc.WholeImage[ci][row][blockNum],
-						outputPtr, outputCol)
+						outputRows, outputCol)
 				}
 				outputCol += compptr.DCTHScalSize
 			}
@@ -314,11 +327,11 @@ func (cc *CoefController) decompressData(
 
 // Block smoothing positions in natural order
 const (
-	q01Pos = 1
-	q10Pos = 8
-	q20Pos = 16
-	q11Pos = 9
-	q02Pos = 2
+	q01Pos     = 1
+	q10Pos     = 8
+	q20Pos     = 16
+	q11Pos     = 9
+	q02Pos     = 2
 	savedCoefs = 6
 )
 
@@ -452,6 +465,7 @@ func (cc *CoefController) decompressSmoothData(
 			DC9 := DC7
 
 			outputCol := 0
+			outputRows := outputPtr[blockRow*compptr.DCTVScalSize:]
 			for blockNum := 0; blockNum <= lastBlockColumn; blockNum++ {
 				// Copy current block into workspace
 				workspace := make([]int16, DCTSize2)
@@ -497,7 +511,7 @@ func (cc *CoefController) decompressSmoothData(
 
 				// Apply IDCT
 				if info.IDCTFunc != nil {
-					info.IDCTFunc(ci, compptr, workspace, outputPtr, outputCol)
+					info.IDCTFunc(ci, compptr, workspace, outputRows, outputCol)
 				}
 
 				// Advance sliding DC register

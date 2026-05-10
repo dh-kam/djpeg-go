@@ -7,35 +7,35 @@ import (
 // helperDecompInfo creates a minimal DecompressInfo for testing.
 func helperDecompInfo() *DecompressInfo {
 	return &DecompressInfo{
-		OutputWidth:     8,
-		OutputHeight:    8,
-		MaxHSampFactor:  1,
-		MaxVSampFactor:  1,
-		MinDCTHScalSize: 8,
-		MinDCTVScalSize: 8,
-		NumComponents:   1,
+		OutputWidth:        8,
+		OutputHeight:       8,
+		MaxHSampFactor:     1,
+		MaxVSampFactor:     1,
+		MinDCTHScalSize:    8,
+		MinDCTVScalSize:    8,
+		NumComponents:      1,
 		OutColorComponents: 1,
 		OutputComponents:   1,
-		JpegColorSpace:   JCS_GRAYSCALE,
-		OutColorSpace:    JCS_GRAYSCALE,
+		JpegColorSpace:     JCS_GRAYSCALE,
+		OutColorSpace:      JCS_GRAYSCALE,
 		CompInfo: []ComponentInfo{
 			{
-				ComponentNeeded: true,
-				ComponentIndex:  0,
-				HSampFactor:     1,
-				VSampFactor:     1,
-				DCTHScalSize:    8,
-				DCTVScalSize:    8,
-				WidthInBlocks:   1,
-				HeightInBlocks:  1,
+				ComponentNeeded:   true,
+				ComponentIndex:    0,
+				HSampFactor:       1,
+				VSampFactor:       1,
+				DCTHScalSize:      8,
+				DCTVScalSize:      8,
+				WidthInBlocks:     1,
+				HeightInBlocks:    1,
 				DownsampledWidth:  8,
 				DownsampledHeight: 8,
-				MCUWidth:       1,
-				MCUHeight:      1,
-				MCUBlocks:      1,
-				MCUSampleWidth: 8,
-				LastColWidth:   1,
-				LastRowHeight:  1,
+				MCUWidth:          1,
+				MCUHeight:         1,
+				MCUBlocks:         1,
+				MCUSampleWidth:    8,
+				LastColWidth:      1,
+				LastRowHeight:     1,
 			},
 		},
 	}
@@ -301,6 +301,108 @@ func TestDecompressOnePassRowCompleted(t *testing.T) {
 	}
 }
 
+func TestDecompressOnePassCallsDecodeMCU(t *testing.T) {
+	info := helperDecompInfo()
+	info.MCUsPerRow = 1
+	info.TotalIMCURows = 1
+	info.CompsInScan = 1
+	info.BlocksInMCU = 1
+	info.CurCompInfo = []*ComponentInfo{&info.CompInfo[0]}
+
+	cc := NewCoefController(info, false)
+	cc.MCURowsPerIMCU = 1
+	decodeCalls := 0
+	cc.DecodeMCU = func(info *DecompressInfo, mcuBuffer [][]int16) bool {
+		decodeCalls++
+		mcuBuffer[0][0] = 77
+		return true
+	}
+	info.IDCTFunc = func(ci int, compptr *ComponentInfo, coefBlock []int16, outputBuf [][]byte, outputCol int) {
+		if coefBlock[0] != 77 {
+			t.Fatalf("IDCT coefficient[0] = %d, want decoded value 77", coefBlock[0])
+		}
+		outputBuf[0][outputCol] = byte(coefBlock[0])
+	}
+
+	outputBuf := make([][][]byte, 1)
+	outputBuf[0] = make([][]byte, 8)
+	for r := range outputBuf[0] {
+		outputBuf[0][r] = make([]byte, 8)
+	}
+
+	result := cc.decompressOnePass(info, outputBuf)
+	if result != JPEGScanCompleted {
+		t.Errorf("decompressOnePass = %d, want JPEGScanCompleted", result)
+	}
+	if decodeCalls != 1 {
+		t.Errorf("DecodeMCU called %d times, want 1", decodeCalls)
+	}
+	if outputBuf[0][0][0] != 77 {
+		t.Errorf("output sample = %d, want 77", outputBuf[0][0][0])
+	}
+}
+
+func TestDecompressOnePassSuspendsFromDecodeMCU(t *testing.T) {
+	info := helperDecompInfo()
+	info.MCUsPerRow = 2
+	info.TotalIMCURows = 1
+	info.CompsInScan = 1
+	info.BlocksInMCU = 1
+	info.CurCompInfo = []*ComponentInfo{&info.CompInfo[0]}
+
+	cc := NewCoefController(info, false)
+	cc.MCURowsPerIMCU = 1
+	cc.DecodeMCU = func(info *DecompressInfo, mcuBuffer [][]int16) bool { return false }
+
+	outputBuf := make([][][]byte, 1)
+	outputBuf[0] = make([][]byte, 8)
+	for r := range outputBuf[0] {
+		outputBuf[0][r] = make([]byte, 16)
+	}
+
+	result := cc.decompressOnePass(info, outputBuf)
+	if result != JPEGSuspended {
+		t.Errorf("decompressOnePass = %d, want JPEGSuspended", result)
+	}
+	if cc.MCUVertOffset != 0 || cc.MCUCtr != 0 {
+		t.Errorf("suspend state yoffset=%d mcu=%d, want 0/0", cc.MCUVertOffset, cc.MCUCtr)
+	}
+}
+
+func TestDecompressOnePassOffsetsIDCTRows(t *testing.T) {
+	info := helperDecompInfo()
+	info.MCUsPerRow = 1
+	info.TotalIMCURows = 1
+	info.CompsInScan = 1
+	info.BlocksInMCU = 2
+	info.CompInfo[0].MCUHeight = 2
+	info.CompInfo[0].MCUBlocks = 2
+	info.CompInfo[0].LastRowHeight = 2
+	info.CurCompInfo = []*ComponentInfo{&info.CompInfo[0]}
+
+	cc := NewCoefController(info, false)
+	cc.MCURowsPerIMCU = 1
+	call := 0
+	info.IDCTFunc = func(ci int, compptr *ComponentInfo, coefBlock []int16, outputBuf [][]byte, outputCol int) {
+		call++
+		outputBuf[0][outputCol] = byte(call)
+	}
+
+	outputBuf := make([][][]byte, 1)
+	outputBuf[0] = make([][]byte, 16)
+	for r := range outputBuf[0] {
+		outputBuf[0][r] = make([]byte, 8)
+	}
+
+	result := cc.decompressOnePass(info, outputBuf)
+	if result != JPEGScanCompleted {
+		t.Errorf("decompressOnePass = %d, want JPEGScanCompleted", result)
+	}
+	if outputBuf[0][0][0] != 1 || outputBuf[0][8][0] != 2 {
+		t.Errorf("IDCT rows wrote row0=%d row8=%d, want 1/2", outputBuf[0][0][0], outputBuf[0][8][0])
+	}
+}
+
 func TestConsumeDataProgressive(t *testing.T) {
 	info := helperDecompInfo()
 	info.MCUsPerRow = 1
@@ -385,6 +487,73 @@ func TestDecompressDataProgressive(t *testing.T) {
 	result := cc.decompressData(info, outputBuf)
 	if result != JPEGScanCompleted {
 		t.Errorf("decompressData = %d, want JPEGScanCompleted", result)
+	}
+}
+
+func TestDecompressDataOffsetsIDCTRows(t *testing.T) {
+	info := helperDecompInfo()
+	info.TotalIMCURows = 1
+	info.OutputIMCURow = 0
+	info.CompInfo[0].VSampFactor = 2
+	info.CompInfo[0].HeightInBlocks = 2
+	info.CompInfo[0].LastRowHeight = 2
+
+	cc := NewCoefController(info, true)
+	cc.WholeImage[0][0][0][0] = 11
+	cc.WholeImage[0][1][0][0] = 22
+	info.IDCTFunc = func(ci int, compptr *ComponentInfo, coefBlock []int16, outputBuf [][]byte, outputCol int) {
+		outputBuf[0][outputCol] = byte(coefBlock[0])
+	}
+
+	outputBuf := make([][][]byte, 1)
+	outputBuf[0] = make([][]byte, 16)
+	for r := range outputBuf[0] {
+		outputBuf[0][r] = make([]byte, 8)
+	}
+
+	result := cc.decompressData(info, outputBuf)
+	if result != JPEGScanCompleted {
+		t.Errorf("decompressData = %d, want JPEGScanCompleted", result)
+	}
+	if outputBuf[0][0][0] != 11 || outputBuf[0][8][0] != 22 {
+		t.Errorf("progressive IDCT rows wrote row0=%d row8=%d, want 11/22", outputBuf[0][0][0], outputBuf[0][8][0])
+	}
+}
+
+func TestDecompressSmoothDataOffsetsIDCTRows(t *testing.T) {
+	info := helperDecompInfo()
+	info.ProgressiveMode = true
+	info.DoBlockSmoothing = true
+	info.TotalIMCURows = 1
+	info.OutputIMCURow = 0
+	info.CompInfo[0].VSampFactor = 2
+	info.CompInfo[0].HeightInBlocks = 2
+	info.CompInfo[0].LastRowHeight = 2
+	info.CompInfo[0].QuantTable = &QuantTable{}
+	for i := range info.CompInfo[0].QuantTable.QuantVal {
+		info.CompInfo[0].QuantTable.QuantVal[i] = 1
+	}
+
+	cc := NewCoefController(info, true)
+	cc.CoefBitsLatch = make([]int, savedCoefs)
+	cc.WholeImage[0][0][0][0] = 33
+	cc.WholeImage[0][1][0][0] = 44
+	info.IDCTFunc = func(ci int, compptr *ComponentInfo, coefBlock []int16, outputBuf [][]byte, outputCol int) {
+		outputBuf[0][outputCol] = byte(coefBlock[0])
+	}
+
+	outputBuf := make([][][]byte, 1)
+	outputBuf[0] = make([][]byte, 16)
+	for r := range outputBuf[0] {
+		outputBuf[0][r] = make([]byte, 8)
+	}
+
+	result := cc.decompressSmoothData(info, outputBuf)
+	if result != JPEGScanCompleted {
+		t.Errorf("decompressSmoothData = %d, want JPEGScanCompleted", result)
+	}
+	if outputBuf[0][0][0] != 33 || outputBuf[0][8][0] != 44 {
+		t.Errorf("smooth IDCT rows wrote row0=%d row8=%d, want 33/44", outputBuf[0][0][0], outputBuf[0][8][0])
 	}
 }
 
@@ -767,9 +936,9 @@ func TestPostProcessorPostProcess1PassWithQuantize(t *testing.T) {
 
 func TestNewMergedUpsamplerH2V1(t *testing.T) {
 	info := &DecompressInfo{
-		OutputWidth:     8,
-		OutputHeight:    4,
-		MaxVSampFactor:  1,
+		OutputWidth:        8,
+		OutputHeight:       4,
+		MaxVSampFactor:     1,
 		OutColorComponents: 3,
 	}
 	mu := NewMergedUpsampler(info, false)
@@ -783,9 +952,9 @@ func TestNewMergedUpsamplerH2V1(t *testing.T) {
 
 func TestNewMergedUpsamplerH2V2(t *testing.T) {
 	info := &DecompressInfo{
-		OutputWidth:     8,
-		OutputHeight:    4,
-		MaxVSampFactor:  2,
+		OutputWidth:        8,
+		OutputHeight:       4,
+		MaxVSampFactor:     2,
 		OutColorComponents: 3,
 	}
 	mu := NewMergedUpsampler(info, false)
@@ -799,9 +968,9 @@ func TestNewMergedUpsamplerH2V2(t *testing.T) {
 
 func TestNewMergedUpsamplerBGYCC(t *testing.T) {
 	info := &DecompressInfo{
-		OutputWidth:     8,
-		OutputHeight:    4,
-		MaxVSampFactor:  1,
+		OutputWidth:        8,
+		OutputHeight:       4,
+		MaxVSampFactor:     1,
 		OutColorComponents: 3,
 	}
 	mu := NewMergedUpsampler(info, true)
@@ -815,9 +984,9 @@ func TestNewMergedUpsamplerBGYCC(t *testing.T) {
 
 func TestMergedUpsamplerStartPass(t *testing.T) {
 	info := &DecompressInfo{
-		OutputWidth:     8,
-		OutputHeight:    4,
-		MaxVSampFactor:  1,
+		OutputWidth:        8,
+		OutputHeight:       4,
+		MaxVSampFactor:     1,
 		OutColorComponents: 3,
 	}
 	mu := NewMergedUpsampler(info, false)
@@ -832,9 +1001,9 @@ func TestMergedUpsamplerStartPass(t *testing.T) {
 
 func TestMergedUpsamplerH2V1Upsample(t *testing.T) {
 	info := &DecompressInfo{
-		OutputWidth:     8,
-		OutputHeight:    2,
-		MaxVSampFactor:  1,
+		OutputWidth:        8,
+		OutputHeight:       2,
+		MaxVSampFactor:     1,
 		OutColorComponents: 3,
 	}
 	mu := NewMergedUpsampler(info, false)
@@ -843,8 +1012,8 @@ func TestMergedUpsamplerH2V1Upsample(t *testing.T) {
 	// h2v1: Y is at full resolution (8 cols), Cb/Cr at half (4 cols)
 	inputBuf := [][][]byte{
 		{{128, 128, 128, 128, 128, 128, 128, 128}, {128, 128, 128, 128, 128, 128, 128, 128}}, // Y: 2 rows x 8 cols
-		{{128, 128, 128, 128}, {128, 128, 128, 128}}, // Cb: 2 rows x 4 cols
-		{{128, 128, 128, 128}, {128, 128, 128, 128}}, // Cr: 2 rows x 4 cols
+		{{128, 128, 128, 128}, {128, 128, 128, 128}},                                         // Cb: 2 rows x 4 cols
+		{{128, 128, 128, 128}, {128, 128, 128, 128}},                                         // Cr: 2 rows x 4 cols
 	}
 	inRowGroupCtr := 0
 	outputBuf := [][]byte{
@@ -861,9 +1030,9 @@ func TestMergedUpsamplerH2V1Upsample(t *testing.T) {
 
 func TestMergedUpsamplerH2V2Upsample(t *testing.T) {
 	info := &DecompressInfo{
-		OutputWidth:     8,
-		OutputHeight:    4,
-		MaxVSampFactor:  2,
+		OutputWidth:        8,
+		OutputHeight:       4,
+		MaxVSampFactor:     2,
 		OutColorComponents: 3,
 	}
 	mu := NewMergedUpsampler(info, false)
@@ -895,9 +1064,9 @@ func TestMergedUpsamplerH2V2Upsample(t *testing.T) {
 
 func TestH2V1MergedUpsample(t *testing.T) {
 	info := &DecompressInfo{
-		OutputWidth:     8,
-		OutputHeight:    1,
-		MaxVSampFactor:  1,
+		OutputWidth:        8,
+		OutputHeight:       1,
+		MaxVSampFactor:     1,
 		OutColorComponents: 3,
 	}
 	mu := NewMergedUpsampler(info, false)
@@ -915,9 +1084,9 @@ func TestH2V1MergedUpsample(t *testing.T) {
 
 func TestH2V2MergedUpsample(t *testing.T) {
 	info := &DecompressInfo{
-		OutputWidth:     8,
-		OutputHeight:    2,
-		MaxVSampFactor:  2,
+		OutputWidth:        8,
+		OutputHeight:       2,
+		MaxVSampFactor:     2,
 		OutColorComponents: 3,
 	}
 	mu := NewMergedUpsampler(info, false)
@@ -946,9 +1115,9 @@ func TestH2V2MergedUpsample(t *testing.T) {
 
 func TestH2V1MergedOddWidth(t *testing.T) {
 	info := &DecompressInfo{
-		OutputWidth:     5, // odd width
-		OutputHeight:    1,
-		MaxVSampFactor:  1,
+		OutputWidth:        5, // odd width
+		OutputHeight:       1,
+		MaxVSampFactor:     1,
 		OutColorComponents: 3,
 	}
 	mu := NewMergedUpsampler(info, false)
@@ -966,17 +1135,17 @@ func TestH2V1MergedOddWidth(t *testing.T) {
 
 func TestH2V2MergedOddWidth(t *testing.T) {
 	info := &DecompressInfo{
-		OutputWidth:     5, // odd width
-		OutputHeight:    2,
-		MaxVSampFactor:  2,
+		OutputWidth:        5, // odd width
+		OutputHeight:       2,
+		MaxVSampFactor:     2,
 		OutColorComponents: 3,
 	}
 	mu := NewMergedUpsampler(info, false)
 
 	inputBuf := [][][]byte{
 		{{128, 128, 128, 128, 128}, {128, 128, 128, 128, 128}}, // Y: 2 rows x 5 cols
-		{{128, 128, 128}},                                       // Cb: 3 values
-		{{128, 128, 128}},                                       // Cr: 3 values
+		{{128, 128, 128}}, // Cb: 3 values
+		{{128, 128, 128}}, // Cr: 3 values
 	}
 	outputBuf := [][]byte{
 		make([]byte, 15),
