@@ -309,9 +309,9 @@ if ok, err := dec.FinishOutput(); err != nil || !ok {
 return dec.FinishDecompress()
 ```
 
-현재는 decoded-raster replay path입니다. Progressive input도 source가 seek
-가능하면 표시할 수 있지만, scan 일부만 decode한 progressive incremental display는
-아직 지원하지 않습니다.
+현재는 decoded-raster replay path입니다. Progressive input도 seek 가능한 reader와
+non-seekable reader 모두에서 표시할 수 있지만, scan 일부만 decode한 progressive
+incremental display는 아직 지원하지 않습니다.
 
 ## Quantized Output
 

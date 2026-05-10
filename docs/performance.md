@@ -172,4 +172,4 @@ limit. The shared conclusions were consistent:
 1. Build a small benchmark guard around `BenchmarkDecompressRandom100Default` and `NoSmooth` with `-count=5` and historical JSON output.
 2. Prototype iMCU-row component-buffer streaming behind a feature flag, then run exact-100 after each step.
 3. Move restart marker handling down into the entropy source before removing `readAllScanData`.
-4. Add focused tests for restart markers, 4:2:2, grayscale, progressive rejection, and non-PPM output formats before broader pipeline refactors.
+4. Add focused tests for restart markers, 4:2:2, grayscale, progressive decoding, and non-PPM output formats before broader pipeline refactors.

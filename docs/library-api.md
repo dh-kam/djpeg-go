@@ -314,8 +314,8 @@ return dec.FinishDecompress()
 ```
 
 This is currently a decoded-raster replay path. Progressive inputs can be
-displayed when the source is seekable, but progressive incremental display from
-partially decoded scans is not yet available.
+displayed from seekable and non-seekable readers, but progressive incremental
+display from partially decoded scans is not yet available.
 
 ## Quantized Output
 
