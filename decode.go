@@ -2212,8 +2212,6 @@ func isUnsupportedError(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "unsupported") ||
-		strings.Contains(msg, "progressive") ||
-		strings.Contains(msg, "arithmetic") ||
 		strings.Contains(msg, "not yet supported")
 }
 
