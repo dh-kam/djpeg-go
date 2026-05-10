@@ -288,6 +288,19 @@ func bigGamutYCbCrToRGB(y, cb, cr byte) (byte, byte, byte) {
 	return clampByte(r), clampByte(g), clampByte(b)
 }
 
+func rgbToBigGamutYCbCr(r, g, b byte) (byte, byte, byte) {
+	y, cb, cr := color.RGBToYCbCr(r, g, b)
+	return y, halfCenteredChroma(cb), halfCenteredChroma(cr)
+}
+
+func halfCenteredChroma(v byte) byte {
+	delta := int(v) - 128
+	if delta >= 0 {
+		return byte(128 + (delta+1)/2)
+	}
+	return byte(128 - ((-delta + 1) / 2))
+}
+
 func clampByte(v int) byte {
 	if v < 0 {
 		return 0

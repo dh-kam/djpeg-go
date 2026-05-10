@@ -986,6 +986,49 @@ func TestDecodeRasterYCbCrQuantizedOutput(t *testing.T) {
 	}
 }
 
+func TestDecodeRasterBigGamutYCbCrQuantizedOutput(t *testing.T) {
+	data, err := os.ReadFile("tests/testdata/color_16x16_420.jpg")
+	if err != nil {
+		t.Skipf("fixture missing: %v", err)
+	}
+	data = rewriteJPEGComponentIDs(t, data, []byte{1, 0x22, 0x23})
+
+	cfg, err := djpeg.DecodeRasterConfig(
+		bytes.NewReader(data),
+		djpeg.WithOutputColorSpace(djpeg.ColorSpaceBigGamutYCbCr),
+		djpeg.WithQuantizeColors(8),
+		djpeg.WithDitherMode(djpeg.DitherNone),
+	)
+	if err != nil {
+		t.Fatalf("DecodeRasterConfig big-gamut YCbCr quantized failed: %v", err)
+	}
+	if !cfg.Quantized || cfg.PixelFormat != djpeg.PixelFormatIndexed8 || cfg.ColorSpace != djpeg.ColorSpaceBigGamutYCbCr {
+		t.Fatalf("big-gamut YCbCr quantized config = %+v, want indexed8 big-gamut-ycbcr quantized output", cfg)
+	}
+
+	raster, err := djpeg.DecodeRaster(
+		bytes.NewReader(data),
+		djpeg.WithOutputColorSpace(djpeg.ColorSpaceBigGamutYCbCr),
+		djpeg.WithQuantizeColors(8),
+		djpeg.WithDitherMode(djpeg.DitherNone),
+	)
+	if err != nil {
+		t.Fatalf("DecodeRaster big-gamut YCbCr quantized failed: %v", err)
+	}
+	if raster.Format != djpeg.PixelFormatIndexed8 || len(raster.Palette) == 0 || len(raster.Palette) > 8 {
+		t.Fatalf("big-gamut YCbCr quantized raster format=%s palette=%d, want indexed8 with 1..8 colors",
+			raster.Format, len(raster.Palette))
+	}
+	if _, ok := raster.Palette[0].(color.RGBA); !ok {
+		t.Fatalf("big-gamut YCbCr quantized palette entry type = %T, want color.RGBA", raster.Palette[0])
+	}
+	for i, idx := range raster.Pix {
+		if int(idx) >= len(raster.Palette) {
+			t.Fatalf("pixel %d index=%d outside palette length %d", i, idx, len(raster.Palette))
+		}
+	}
+}
+
 func TestDecodeRasterCMYKQuantizedOutput(t *testing.T) {
 	data, err := base64.StdEncoding.DecodeString(tinyCMYKJPEGBase64)
 	if err != nil {

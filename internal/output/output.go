@@ -18,6 +18,7 @@ const (
 	ColorSpaceGrayscale ColorSpace = iota
 	ColorSpaceRGB
 	ColorSpaceYCbCr
+	ColorSpaceBigGamutYCbCr
 	ColorSpaceCMYK
 	ColorSpaceYCCK
 )

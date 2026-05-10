@@ -100,7 +100,7 @@ func quantizeComponents(cs ColorSpace) (int, error) {
 	switch cs {
 	case ColorSpaceGrayscale:
 		return 1, nil
-	case ColorSpaceRGB, ColorSpaceYCbCr:
+	case ColorSpaceRGB, ColorSpaceYCbCr, ColorSpaceBigGamutYCbCr:
 		return 3, nil
 	case ColorSpaceCMYK, ColorSpaceYCCK:
 		return 4, nil
@@ -131,7 +131,7 @@ func quantizeColormap(rows [][]byte, info *ImageInfo, opts QuantizeOptions) (*Co
 	switch info.ColorSpace {
 	case ColorSpaceGrayscale:
 		return makeGrayPalette(desired), nil
-	case ColorSpaceRGB, ColorSpaceYCbCr:
+	case ColorSpaceRGB, ColorSpaceYCbCr, ColorSpaceBigGamutYCbCr:
 		if !opts.OnePass {
 			return makeRGBMedianCutPalette(rows, info, desired)
 		}
@@ -170,7 +170,7 @@ func normalizeColormap(cm *Colormap, cs ColorSpace) (*Colormap, error) {
 			copy(gray, cm.Maps[0][:cm.NumColors])
 		}
 		return &Colormap{Maps: [][]uint8{gray}, NumColors: cm.NumColors}, nil
-	case ColorSpaceRGB, ColorSpaceYCbCr:
+	case ColorSpaceRGB, ColorSpaceYCbCr, ColorSpaceBigGamutYCbCr:
 		r := make([]byte, cm.NumColors)
 		g := make([]byte, cm.NumColors)
 		b := make([]byte, cm.NumColors)
@@ -211,7 +211,7 @@ func normalizeColormap(cm *Colormap, cs ColorSpace) (*Colormap, error) {
 }
 
 func threeComponentQuantizeSpace(cs ColorSpace) bool {
-	return cs == ColorSpaceRGB || cs == ColorSpaceYCbCr
+	return cs == ColorSpaceRGB || cs == ColorSpaceYCbCr || cs == ColorSpaceBigGamutYCbCr
 }
 
 func makeGrayPalette(n int) *Colormap {
