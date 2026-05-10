@@ -271,8 +271,8 @@ output 경로를 사용합니다.
 
 `WithOutputGamma`와 `WithBlockSmoothing`은 libjpeg decompressor parameter에
 대응합니다. Progressive scanline output은 seek 가능한 input에서 pure Go fallback
-경로로 사용할 수 있습니다. Progressive coefficient decoding은 아직
-`ErrUnsupported`로 보고합니다.
+경로로 사용할 수 있으며, scaled 및 quantized raster output도 포함합니다.
+Progressive coefficient decoding은 아직 `ErrUnsupported`로 보고합니다.
 
 ## Buffered-Image Output Pass
 

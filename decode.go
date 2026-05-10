@@ -466,13 +466,8 @@ func (d *Decoder) startProgressiveFallback() error {
 	if d.opts.RawDataOut {
 		return wrapDecodeError("start decompress", fmt.Errorf("jpeg: progressive raw data output not yet supported"))
 	}
-	if d.quantizationRequested() {
-		return wrapDecodeError("start decompress", fmt.Errorf("jpeg: progressive quantized output not yet supported"))
-	}
-	if _, enabled, err := d.opts.scaleSize(); err != nil {
+	if _, _, err := d.opts.scaleSize(); err != nil {
 		return err
-	} else if enabled {
-		return wrapDecodeError("start decompress", fmt.Errorf("jpeg: progressive scaled output not yet supported"))
 	}
 	if d.source == nil {
 		return wrapDecodeError("start decompress", fmt.Errorf("jpeg: progressive scanline fallback requires seekable input"))
@@ -484,20 +479,35 @@ func (d *Decoder) startProgressiveFallback() error {
 	if err != nil {
 		return wrapDecodeError("decode progressive", err)
 	}
-	format := d.header.PixelFormat
-	switch format {
-	case PixelFormatGray8, PixelFormatRGB24, PixelFormatYCbCr24, PixelFormatCMYK32:
-	default:
-		return fmt.Errorf("%w: progressive output pixel format %s is not supported", ErrUnsupported, format)
+	format, err := d.progressiveBasePixelFormat()
+	if err != nil {
+		return err
 	}
 	raster, err := rasterFromImage(img, format)
 	if err != nil {
 		return err
 	}
+	if raster.Rect.Dx() != d.header.Width || raster.Rect.Dy() != d.header.Height {
+		raster, err = scaleRasterNearest(raster, d.header.Width, d.header.Height)
+		if err != nil {
+			return err
+		}
+	}
+	output := d.header
+	if d.quantizationRequested() {
+		d.quantSource = raster
+		raster, err = d.quantizeRaster(raster)
+		if err != nil {
+			return err
+		}
+		d.palette = append(color.Palette(nil), raster.Palette...)
+		output.ActualNumColors = len(d.palette)
+	} else {
+		d.quantSource = nil
+		d.palette = nil
+	}
 	d.scaled = raster
 	d.scaledNextRow = 0
-	d.quantSource = nil
-	d.palette = nil
 	d.rawBufferedRows = nil
 	d.rawBufferedAll = nil
 	d.rawBufferedNext = 0
@@ -510,7 +520,7 @@ func (d *Decoder) startProgressiveFallback() error {
 	}
 	d.outputScan = d.inputScan
 	d.inputComplete = true
-	d.output = d.header
+	d.output = output
 	d.output.Width = raster.Rect.Dx()
 	d.output.Height = raster.Rect.Dy()
 	d.output.Components = raster.Format.Channels()
@@ -521,6 +531,40 @@ func (d *Decoder) startProgressiveFallback() error {
 		d.outputPass = false
 	}
 	return nil
+}
+
+func (d *Decoder) progressiveBasePixelFormat() (PixelFormat, error) {
+	if !d.quantizationRequested() {
+		return d.header.PixelFormat, progressivePixelFormatError(d.header.PixelFormat)
+	}
+	var format PixelFormat
+	switch d.header.ColorSpace {
+	case ColorSpaceGray:
+		format = PixelFormatGray8
+	case ColorSpaceRGB, ColorSpaceBigGamutRGB:
+		format = PixelFormatRGB24
+	case ColorSpaceYCbCr:
+		format = PixelFormatYCbCr24
+	case ColorSpaceBigGamutYCbCr:
+		format = PixelFormatBigGamutYCbCr24
+	case ColorSpaceCMYK:
+		format = PixelFormatCMYK32
+	case ColorSpaceYCCK:
+		format = PixelFormatYCCK32
+	default:
+		format = PixelFormatRGB24
+	}
+	return format, progressivePixelFormatError(format)
+}
+
+func progressivePixelFormatError(format PixelFormat) error {
+	switch format {
+	case PixelFormatGray8, PixelFormatRGB24, PixelFormatYCbCr24,
+		PixelFormatBigGamutYCbCr24, PixelFormatCMYK32, PixelFormatYCCK32:
+		return nil
+	default:
+		return fmt.Errorf("%w: progressive output pixel format %s is not supported", ErrUnsupported, format)
+	}
 }
 
 // CalcOutputDimensions computes output dimensions without starting output.

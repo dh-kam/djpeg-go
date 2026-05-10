@@ -295,11 +295,18 @@ func rasterFromImage(img image.Image, format PixelFormat) (*Raster, error) {
 			case PixelFormatYCbCr24:
 				r, g, b, _ := c.RGBA()
 				row[i], row[i+1], row[i+2] = color.RGBToYCbCr(byte(r>>8), byte(g>>8), byte(b>>8))
+			case PixelFormatBigGamutYCbCr24:
+				r, g, b, _ := c.RGBA()
+				row[i], row[i+1], row[i+2] = rgbToBigGamutYCbCr(byte(r>>8), byte(g>>8), byte(b>>8))
 			case PixelFormatCMYK32:
 				cmyk := color.CMYKModel.Convert(c).(color.CMYK)
 				row[i] = cmyk.C
 				row[i+1] = cmyk.M
 				row[i+2] = cmyk.Y
+				row[i+3] = cmyk.K
+			case PixelFormatYCCK32:
+				cmyk := color.CMYKModel.Convert(c).(color.CMYK)
+				row[i], row[i+1], row[i+2] = color.RGBToYCbCr(255-cmyk.C, 255-cmyk.M, 255-cmyk.Y)
 				row[i+3] = cmyk.K
 			default:
 				return nil, ErrUnsupported

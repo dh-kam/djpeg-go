@@ -275,8 +275,8 @@ output.
 
 `WithOutputGamma` and `WithBlockSmoothing` mirror libjpeg decompressor
 parameters. Progressive scanline output is available for seekable inputs through
-a pure Go fallback path. Progressive coefficient decoding is still reported as
-`ErrUnsupported`.
+a pure Go fallback path, including scaled and quantized raster output.
+Progressive coefficient decoding is still reported as `ErrUnsupported`.
 
 ## Buffered-Image Output Passes
 

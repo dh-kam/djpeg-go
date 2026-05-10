@@ -3163,6 +3163,33 @@ func TestDecodeProgressiveRaster(t *testing.T) {
 		t.Fatalf("DecodeRaster progressive raster = %dx%d %s, want %dx%d rgb24",
 			raster.Rect.Dx(), raster.Rect.Dy(), raster.Format, cfg.Width, cfg.Height)
 	}
+
+	scaled, err := djpeg.DecodeRaster(bytes.NewReader(data), djpeg.WithScale(1, 2))
+	if err != nil {
+		t.Fatalf("DecodeRaster progressive scaled failed: %v", err)
+	}
+	if scaled.Rect.Dx() != cfg.Width/2 || scaled.Rect.Dy() != cfg.Height/2 {
+		t.Fatalf("DecodeRaster progressive scaled = %dx%d, want %dx%d",
+			scaled.Rect.Dx(), scaled.Rect.Dy(), cfg.Width/2, cfg.Height/2)
+	}
+
+	quantized, err := djpeg.DecodeRaster(
+		bytes.NewReader(data),
+		djpeg.WithQuantizeColors(8),
+		djpeg.WithDitherMode(djpeg.DitherNone),
+	)
+	if err != nil {
+		t.Fatalf("DecodeRaster progressive quantized failed: %v", err)
+	}
+	if quantized.Format != djpeg.PixelFormatIndexed8 || len(quantized.Palette) == 0 || len(quantized.Palette) > 8 {
+		t.Fatalf("DecodeRaster progressive quantized format=%s palette=%d, want indexed8 palette 1..8",
+			quantized.Format, len(quantized.Palette))
+	}
+
+	_, err = djpeg.DecodeRaster(bytes.NewBuffer(data))
+	if !errors.Is(err, djpeg.ErrUnsupported) {
+		t.Fatalf("DecodeRaster progressive non-seekable error = %v, want ErrUnsupported", err)
+	}
 }
 
 func insertHeaderMarker(data []byte, markerCode int, payload []byte) []byte {
