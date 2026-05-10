@@ -158,8 +158,6 @@ func (d *Decompressor) outputPassSetup() error {
 // ReadScanlines reads some scanlines of data from the JPEG decompressor.
 // Returns the number of scanlines actually read.
 // Ported from jdapistd.c jpeg_read_scanlines().
-// The marker-level decompressor owns libjpeg state transitions only; the
-// connected scanline pipeline lives in internal/decoder.
 func (d *Decompressor) ReadScanlines(scanlines [][]uint8) (int, error) {
 	if d.GlobalState != DStateScanning {
 		return 0, ErrBadState
@@ -167,7 +165,16 @@ func (d *Decompressor) ReadScanlines(scanlines [][]uint8) (int, error) {
 	if d.OutputScanline >= d.OutputHeight {
 		return 0, nil
 	}
-	return 0, ErrNotImpl
+	if d.scanlineReader == nil {
+		return 0, ErrNotImpl
+	}
+	return d.scanlineReader(d, scanlines)
+}
+
+// SetScanlineReader connects the marker-level API state machine to the full
+// scanline output pipeline.
+func (d *Decompressor) SetScanlineReader(reader ScanlineReader) {
+	d.scanlineReader = reader
 }
 
 // FinishDecompress finishes JPEG decompression.

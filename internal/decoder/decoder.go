@@ -149,7 +149,9 @@ func New(r io.Reader) *Decoder {
 	d := marker.NewDecompressor()
 	d.SetSource(r)
 	d.DoFancyUpsampling = true
-	return &Decoder{d: d, idctMethod: huff.IDCTISlow, DoFancyUpsampling: true}
+	dec := &Decoder{d: d, idctMethod: huff.IDCTISlow, DoFancyUpsampling: true}
+	d.SetScanlineReader(dec.readScanlines)
+	return dec
 }
 
 func (dec *Decoder) SetIDCTMethod(method string) {
@@ -1239,6 +1241,10 @@ func (dec *Decoder) HuffmanTable(index int, dc bool) (bits [17]uint8, values [25
 }
 
 func (dec *Decoder) ReadScanlines(scanlines [][]uint8) (int, error) {
+	return dec.d.ReadScanlines(scanlines)
+}
+
+func (dec *Decoder) readScanlines(_ *marker.Decompressor, scanlines [][]uint8) (int, error) {
 	if dec.d.GlobalState != marker.DStateScanning {
 		return 0, marker.ErrBadState
 	}

@@ -201,6 +201,11 @@ type SavedMarker struct {
 	Data           []byte
 }
 
+// ScanlineReader is the image-output callback installed by the full decoder
+// pipeline. It is responsible for filling scanlines and advancing
+// OutputScanline.
+type ScanlineReader func(d *Decompressor, scanlines [][]uint8) (int, error)
+
 // Decompressor holds all state for JPEG decompression.
 type Decompressor struct {
 	// Basic image description (filled in by ReadHeader)
@@ -312,6 +317,9 @@ type Decompressor struct {
 	master *decompMaster
 	// Source reader
 	Src io.Reader
+
+	// Optional pipeline callbacks installed by higher-level controllers.
+	scanlineReader ScanlineReader
 }
 
 // Errors.

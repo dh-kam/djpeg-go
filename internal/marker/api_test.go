@@ -311,6 +311,49 @@ func TestDecompressorReadScanlines(t *testing.T) {
 	}
 }
 
+func TestDecompressorReadScanlinesWithReader(t *testing.T) {
+	data := buildSOF0Grayscale()
+	d := NewDecompressor()
+	d.SetSource(bytes.NewReader(data))
+
+	_, err := d.ReadHeader(true)
+	if err != nil {
+		t.Fatalf("ReadHeader error: %v", err)
+	}
+	if err := d.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress error: %v", err)
+	}
+
+	var calls int
+	d.SetScanlineReader(func(d *Decompressor, scanlines [][]uint8) (int, error) {
+		calls++
+		if len(scanlines) == 0 {
+			return 0, nil
+		}
+		for i := range scanlines[0] {
+			scanlines[0][i] = 0x7f
+		}
+		d.OutputScanline++
+		return 1, nil
+	})
+
+	scanlines := make([][]uint8, 1)
+	scanlines[0] = make([]uint8, d.OutputWidth)
+	n, err := d.ReadScanlines(scanlines)
+	if err != nil {
+		t.Fatalf("ReadScanlines error: %v", err)
+	}
+	if n != 1 || calls != 1 || d.OutputScanline != 1 {
+		t.Fatalf("ReadScanlines n=%d calls=%d output_scanline=%d, want 1/1/1",
+			n, calls, d.OutputScanline)
+	}
+	for i, sample := range scanlines[0] {
+		if sample != 0x7f {
+			t.Fatalf("scanline[%d] = 0x%02x, want 0x7f", i, sample)
+		}
+	}
+}
+
 func TestDecompressorInputCompleteAfterEOI(t *testing.T) {
 	data := buildMinimalJPEG()
 	d := NewDecompressor()
