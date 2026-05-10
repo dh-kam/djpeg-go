@@ -434,7 +434,7 @@ func (dec *Decoder) ReadHeaderStatus(requireImage bool) (int, error) {
 func (dec *Decoder) StartDecompress() error {
 	d := dec.d
 	if d.IsProgressive() {
-		return errors.New("jpeg: progressive JPEG not yet supported")
+		return dec.startProgressiveDecompress()
 	}
 	dec.memoryUsed = 0
 	dec.applyInputColorSpaceOverride()
@@ -490,6 +490,63 @@ func (dec *Decoder) StartDecompress() error {
 	}
 	dec.totalIMCURows = d.MCURowsInScan
 	dec.currentIMCURow = 0
+	return nil
+}
+
+func (dec *Decoder) startProgressiveDecompress() error {
+	d := dec.d
+	if d.ArithCodeFlag {
+		return errors.New("jpeg: progressive arithmetic JPEG not yet supported")
+	}
+	dec.memoryUsed = 0
+	dec.applyInputColorSpaceOverride()
+	dec.applyOutputColorSpaceOverride()
+	dec.applyColorTransformOverride()
+	d.DoFancyUpsampling = dec.DoFancyUpsampling
+	d.DisableChromaIDCTScaling = dec.DisableChromaIDCTScaling
+
+	coefficients, err := dec.readProgressiveCoefficients()
+	if err != nil {
+		return err
+	}
+	if d.NumComponents > len(d.CurCompInfo) {
+		return fmt.Errorf("%w: progressive output with %d components", ErrUnsupportedJPEG, d.NumComponents)
+	}
+	marker.CalcOutputDimensions(d)
+	dec.prepareFullImageScanGeometry()
+	dec.buildQuantTables()
+	dec.buildIDCTTables()
+
+	dec.rangeLimit = huff.NewRangeLimitTable()
+	dec.rlColorConv = make([]byte, 1024+2*rlColorOffset)
+	for i := range dec.rlColorConv {
+		v := i - rlColorOffset
+		if v < 0 {
+			dec.rlColorConv[i] = 0
+		} else if v > 255 {
+			dec.rlColorConv[i] = 255
+		} else {
+			dec.rlColorConv[i] = byte(v)
+		}
+	}
+
+	if err := d.StartDecompress(); err != nil {
+		return err
+	}
+	if err := dec.validateColorConversion(); err != nil {
+		return err
+	}
+	if err := dec.setupColorPipeline(); err != nil {
+		return err
+	}
+	if err := dec.renderCoefficientComponents(coefficients); err != nil {
+		return err
+	}
+	dec.totalIMCURows = d.TotalIMCURows
+	dec.currentIMCURow = 0
+	dec.allDecoded = true
+	dec.rowGroupCtr = 0
+	dec.rowGroupsAvail = d.OutputHeight
 	return nil
 }
 
@@ -849,6 +906,114 @@ func (dec *Decoder) loadCoefficientMCUBlocks(out []CoefficientComponent, blocks 
 	}
 }
 
+func (dec *Decoder) prepareFullImageScanGeometry() {
+	d := dec.d
+	d.CompsInScan = d.NumComponents
+	d.MCUsPerRow = marker.JDivRoundUp(d.ImageWidth, d.MaxHSampFactor*d.BlockSize)
+	d.MCURowsInScan = d.TotalIMCURows
+	d.BlocksInMCU = 0
+	for ci := 0; ci < d.NumComponents; ci++ {
+		comp := &d.CompInfo[ci]
+		if ci < len(d.CurCompInfo) {
+			d.CurCompInfo[ci] = comp
+		}
+		comp.MCUWidth = comp.HSampFactor
+		comp.MCUHeight = comp.VSampFactor
+		comp.MCUBlocks = comp.MCUWidth * comp.MCUHeight
+		comp.MCUSampleWidth = comp.MCUWidth * comp.DCHScaledSize
+		tmp := comp.WidthInBlocks % comp.MCUWidth
+		if tmp == 0 {
+			tmp = comp.MCUWidth
+		}
+		comp.LastColWidth = tmp
+		tmp = comp.HeightInBlocks % comp.MCUHeight
+		if tmp == 0 {
+			tmp = comp.MCUHeight
+		}
+		comp.LastRowHeight = tmp
+		for block := 0; block < comp.MCUBlocks && d.BlocksInMCU < len(d.MCUMembership); block++ {
+			d.MCUMembership[d.BlocksInMCU] = ci
+			d.BlocksInMCU++
+		}
+	}
+}
+
+func (dec *Decoder) renderCoefficientComponents(components []CoefficientComponent) error {
+	d := dec.d
+	if len(dec.componentBuf) < d.NumComponents {
+		return errors.New("jpeg: missing progressive component buffer")
+	}
+	for ci, coefficients := range components {
+		if ci >= d.NumComponents || ci >= len(dec.componentBuf) {
+			continue
+		}
+		comp := &d.CompInfo[ci]
+		if !comp.ComponentNeeded {
+			continue
+		}
+		compBuf := dec.componentBuf[ci]
+		if len(compBuf) == 0 {
+			continue
+		}
+		if err := dec.renderCoefficientComponent(comp, coefficients, compBuf, ci); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (dec *Decoder) renderCoefficientComponent(comp *marker.ComponentInfo, coefficients CoefficientComponent, compBuf [][]byte, tableIndex int) error {
+	dctRows := comp.DCVScaledSize
+	dctCols := comp.DCHScaledSize
+	if dctRows <= 0 || dctRows > len(dec.outputBuf) || dctCols <= 0 {
+		return fmt.Errorf("%w: invalid progressive IDCT size %dx%d", ErrDecodeFailed, dctCols, dctRows)
+	}
+	for blockY := 0; blockY < coefficients.HeightInBlocks; blockY++ {
+		rowOffset := blockY * dctRows
+		if rowOffset >= len(compBuf) {
+			break
+		}
+		outputBuf := dec.outputBuf[:dctRows]
+		for row := 0; row < dctRows; row++ {
+			bufRow := rowOffset + row
+			if bufRow < len(compBuf) {
+				outputBuf[row] = compBuf[bufRow]
+			} else {
+				outputBuf[row] = compBuf[len(compBuf)-1]
+			}
+		}
+		for blockX := 0; blockX < coefficients.WidthInBlocks; blockX++ {
+			blockIndex := blockY*coefficients.WidthInBlocks + blockX
+			if blockIndex >= len(coefficients.Blocks) {
+				break
+			}
+			outputCol := blockX * dctCols
+			if outputCol >= len(outputBuf[0]) {
+				continue
+			}
+			var block huff.Block
+			copy(block[:], coefficients.Blocks[blockIndex][:])
+			dec.inverseDCTBlock(block[:], tableIndex, outputBuf, outputCol, dctRows, dctCols)
+		}
+	}
+	return nil
+}
+
+func (dec *Decoder) inverseDCTBlock(block []huff.JCOEF, tableIndex int, outputBuf []huff.BlockRow, outputCol, dctRows, dctCols int) {
+	switch {
+	case dctRows == 16 && dctCols == 16:
+		huff.IDCT16x16Impl(block, dec.multTablesISlow[tableIndex], outputBuf, outputCol, dec.rangeLimit)
+	case dctRows != huff.DCTSize || dctCols != huff.DCTSize:
+		huff.IDCTScaledISlowImpl(block, dec.multTablesISlow[tableIndex], outputBuf, outputCol, dctRows, dctCols, dec.rangeLimit)
+	case dec.idctMethod == huff.IDCTIFast:
+		huff.IDCTIFastImpl(block, dec.multTablesIFast[tableIndex], outputBuf, outputCol, dec.rangeLimit)
+	case dec.idctMethod == huff.IDCTFloat:
+		huff.IDCTFloatImpl(block, dec.multTablesFloat[tableIndex], outputBuf, outputCol, dec.rangeLimit)
+	default:
+		huff.IDCTISlowImpl(block, dec.multTablesISlow[tableIndex], outputBuf, outputCol, dec.rangeLimit)
+	}
+}
+
 func (dec *Decoder) allocCoefficientComponents() ([]CoefficientComponent, error) {
 	components := dec.Components()
 	out := make([]CoefficientComponent, len(components))
@@ -967,7 +1132,9 @@ func (dec *Decoder) ReadRawDataRows(maxLines int) ([]RawComponent, int, error) {
 	}
 
 	iMCURow := dec.currentIMCURow
-	dec.decodeIMCURow()
+	if !dec.allDecoded {
+		dec.decodeIMCURow()
+	}
 	dec.currentIMCURow++
 	if dec.currentIMCURow >= dec.totalIMCURows {
 		dec.allDecoded = true

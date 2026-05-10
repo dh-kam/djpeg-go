@@ -148,8 +148,8 @@ func TestDecoderFinishWithoutStart(t *testing.T) {
 	_ = err
 }
 
-// TestDecoderProgressiveHeader tests that progressive JPEG headers are
-// accepted while full decompression remains unsupported.
+// TestDecoderProgressiveHeader tests that minimal progressive JPEGs can be
+// decoded through the internal pipeline.
 func TestDecoderProgressiveHeader(t *testing.T) {
 	// Build a minimal progressive JPEG (SOF2)
 	var buf bytes.Buffer
@@ -201,8 +201,74 @@ func TestDecoderProgressiveHeader(t *testing.T) {
 		t.Fatalf("progressive header = %dx%d comps=%d progressive=%v, want 8x8 comps=1 progressive=true",
 			w, h, comps, dec.IsProgressive())
 	}
-	if err := dec.StartDecompress(); err == nil {
-		t.Fatal("StartDecompress progressive error = nil, want unsupported")
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress progressive failed: %v", err)
+	}
+	row := make([]byte, dec.OutputWidth()*dec.OutputComponents())
+	for dec.OutputScanline() < dec.OutputHeight() {
+		n, err := dec.ReadScanlines([][]byte{row})
+		if err != nil {
+			t.Fatalf("ReadScanlines progressive failed: %v", err)
+		}
+		if n == 0 {
+			t.Fatal("ReadScanlines progressive returned 0 before image end")
+		}
+		for i, sample := range row {
+			if sample != 128 {
+				t.Fatalf("progressive sample[%d] = %d, want 128", i, sample)
+			}
+		}
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress progressive failed: %v", err)
+	}
+}
+
+func TestDecoderProgressiveFixture(t *testing.T) {
+	data, err := os.ReadFile(testFixture("test_progressive.jpg"))
+	if err != nil {
+		t.Skipf("progressive fixture missing: %v", err)
+	}
+
+	dec := New(bytes.NewReader(data))
+	w, h, comps, _, err := dec.ReadHeader()
+	if err != nil {
+		t.Fatalf("ReadHeader progressive fixture failed: %v", err)
+	}
+	if w <= 0 || h <= 0 || comps != 3 || !dec.IsProgressive() {
+		t.Fatalf("progressive fixture header = %dx%d comps=%d progressive=%v, want color progressive",
+			w, h, comps, dec.IsProgressive())
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress progressive fixture failed: %v", err)
+	}
+	row := make([]byte, dec.OutputWidth()*dec.OutputComponents())
+	rowsRead := 0
+	nonZero := false
+	for dec.OutputScanline() < dec.OutputHeight() {
+		n, err := dec.ReadScanlines([][]byte{row})
+		if err != nil {
+			t.Fatalf("ReadScanlines progressive fixture failed: %v", err)
+		}
+		if n == 0 {
+			t.Fatal("ReadScanlines progressive fixture returned 0 before image end")
+		}
+		rowsRead += n
+		for _, sample := range row {
+			if sample != 0 {
+				nonZero = true
+				break
+			}
+		}
+	}
+	if rowsRead != dec.OutputHeight() {
+		t.Fatalf("progressive fixture rows=%d, want %d", rowsRead, dec.OutputHeight())
+	}
+	if !nonZero {
+		t.Fatal("progressive fixture decoded all-zero pixels")
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress progressive fixture failed: %v", err)
 	}
 }
 
