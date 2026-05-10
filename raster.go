@@ -268,6 +268,47 @@ func (r *Raster) RGBA() *image.RGBA {
 	return out
 }
 
+func rasterFromImage(img image.Image, format PixelFormat) (*Raster, error) {
+	if img == nil {
+		return nil, ErrInvalidOption
+	}
+	bounds := img.Bounds()
+	width := bounds.Dx()
+	height := bounds.Dy()
+	out := NewRaster(width, height, format)
+	if out.Format == PixelFormatUnknown {
+		return nil, ErrUnsupported
+	}
+	for y := 0; y < height; y++ {
+		row := out.Pix[y*out.Stride : y*out.Stride+width*format.Channels()]
+		for x := 0; x < width; x++ {
+			c := img.At(bounds.Min.X+x, bounds.Min.Y+y)
+			i := x * format.Channels()
+			switch format {
+			case PixelFormatGray8:
+				row[i] = color.GrayModel.Convert(c).(color.Gray).Y
+			case PixelFormatRGB24:
+				r, g, b, _ := c.RGBA()
+				row[i] = byte(r >> 8)
+				row[i+1] = byte(g >> 8)
+				row[i+2] = byte(b >> 8)
+			case PixelFormatYCbCr24:
+				r, g, b, _ := c.RGBA()
+				row[i], row[i+1], row[i+2] = color.RGBToYCbCr(byte(r>>8), byte(g>>8), byte(b>>8))
+			case PixelFormatCMYK32:
+				cmyk := color.CMYKModel.Convert(c).(color.CMYK)
+				row[i] = cmyk.C
+				row[i+1] = cmyk.M
+				row[i+2] = cmyk.Y
+				row[i+3] = cmyk.K
+			default:
+				return nil, ErrUnsupported
+			}
+		}
+	}
+	return out, nil
+}
+
 func yccToCMY(y, cb, cr byte) (byte, byte, byte) {
 	yy := int(y)
 	cbb := int(cb)

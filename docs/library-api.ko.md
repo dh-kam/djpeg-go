@@ -270,9 +270,9 @@ decoder는 raster와 raw component output 모두에서 libjpeg 스타일 scaled-
 output 경로를 사용합니다.
 
 `WithOutputGamma`와 `WithBlockSmoothing`은 libjpeg decompressor parameter에
-대응합니다. Block smoothing은 progressive output pass에서 의미가 있으며,
-현재 decoder는 progressive header를 읽을 수 있지만 progressive scanline 및
-coefficient decoding은 아직 `ErrUnsupported`로 보고합니다.
+대응합니다. Progressive scanline output은 seek 가능한 input에서 pure Go fallback
+경로로 사용할 수 있습니다. Progressive coefficient decoding은 아직
+`ErrUnsupported`로 보고합니다.
 
 ## Buffered-Image Output Pass
 
@@ -306,9 +306,9 @@ if ok, err := dec.FinishOutput(); err != nil || !ok {
 return dec.FinishDecompress()
 ```
 
-현재는 sequential JPEG replay path입니다. Progressive header는 읽을 수 있지만
-decompression 시작 시 progressive input은 아직 `ErrUnsupported`로 보고되므로
-progressive incremental display는 미지원입니다.
+현재는 decoded-raster replay path입니다. Progressive input도 source가 seek
+가능하면 표시할 수 있지만, scan 일부만 decode한 progressive incremental display는
+아직 지원하지 않습니다.
 
 ## Quantized Output
 
@@ -954,8 +954,9 @@ if err != nil {
 _ = img
 ```
 
-현재 progressive scanline 및 coefficient decoding은 지원하지 않습니다.
-Progressive header는 `ReadHeader`와 `DecodeRasterConfig`로 조회할 수 있습니다.
+현재 progressive coefficient decoding은 지원하지 않습니다. Progressive header는
+`ReadHeader`와 `DecodeRasterConfig`로 조회할 수 있으며, progressive scanline은
+seek 가능한 input에서 사용할 수 있습니다.
 
 ## CLI Flag와 API Option 대응
 

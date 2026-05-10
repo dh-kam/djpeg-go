@@ -274,9 +274,9 @@ the libjpeg-style scaled-IDCT output path for both raster and raw component
 output.
 
 `WithOutputGamma` and `WithBlockSmoothing` mirror libjpeg decompressor
-parameters. Block smoothing affects progressive output passes once progressive
-decoding is available; the current decoder can read progressive headers but
-still reports progressive scanline and coefficient decoding as `ErrUnsupported`.
+parameters. Progressive scanline output is available for seekable inputs through
+a pure Go fallback path. Progressive coefficient decoding is still reported as
+`ErrUnsupported`.
 
 ## Buffered-Image Output Passes
 
@@ -310,9 +310,9 @@ if ok, err := dec.FinishOutput(); err != nil || !ok {
 return dec.FinishDecompress()
 ```
 
-This is currently a sequential JPEG replay path. Progressive headers can be
-read, but progressive input is still reported as `ErrUnsupported` when
-decompression starts, so progressive incremental display is not yet available.
+This is currently a decoded-raster replay path. Progressive inputs can be
+displayed when the source is seekable, but progressive incremental display from
+partially decoded scans is not yet available.
 
 ## Quantized Output
 
@@ -963,9 +963,9 @@ if err != nil {
 _ = img
 ```
 
-Currently unsupported JPEG features include progressive scanline and coefficient
-decoding. Progressive headers can be inspected through `ReadHeader` and
-`DecodeRasterConfig`.
+Currently unsupported JPEG features include progressive coefficient decoding.
+Progressive headers can be inspected through `ReadHeader` and
+`DecodeRasterConfig`; progressive scanlines are available for seekable inputs.
 
 ## Mapping CLI Flags to API Options
 

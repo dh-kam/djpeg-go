@@ -2053,7 +2053,7 @@ func TestDecoderConsumeInputTablesOnly(t *testing.T) {
 	}
 }
 
-func TestDecoderConsumeInputProgressiveStillRejectedAtStart(t *testing.T) {
+func TestDecoderConsumeInputProgressiveStartDecompress(t *testing.T) {
 	data, err := os.ReadFile("tests/testdata/test_progressive.jpg")
 	if err != nil {
 		t.Skipf("fixture missing: %v", err)
@@ -2070,8 +2070,16 @@ func TestDecoderConsumeInputProgressiveStillRejectedAtStart(t *testing.T) {
 	if !dec.IsProgressive() {
 		t.Fatal("ConsumeInput should expose progressive header state")
 	}
-	if err := dec.StartDecompress(); !errors.Is(err, djpeg.ErrUnsupported) {
-		t.Fatalf("StartDecompress progressive error = %v, want ErrUnsupported", err)
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress progressive failed: %v", err)
+	}
+	row := make([]byte, dec.OutputConfig().Stride)
+	n, err := dec.ReadScanlines([][]byte{row})
+	if err != nil || n != 1 {
+		t.Fatalf("ReadScanlines progressive rows=%d err=%v, want 1 nil", n, err)
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress progressive failed: %v", err)
 	}
 }
 
@@ -2172,8 +2180,12 @@ func TestDecoderReadHeaderRequireImageProgressive(t *testing.T) {
 		t.Fatalf("progressive header status=%v cfg.Progressive=%v dec.IsProgressive=%v, want ok/progressive",
 			status, cfg.Progressive, dec.IsProgressive())
 	}
-	if err := dec.StartDecompress(); !errors.Is(err, djpeg.ErrUnsupported) {
-		t.Fatalf("StartDecompress progressive error = %v, want ErrUnsupported", err)
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress progressive failed: %v", err)
+	}
+	row := make([]byte, dec.OutputConfig().Stride)
+	if n, err := dec.ReadScanlines([][]byte{row}); err != nil || n != 1 {
+		t.Fatalf("ReadScanlines progressive rows=%d err=%v, want 1 nil", n, err)
 	}
 }
 
@@ -3121,7 +3133,7 @@ func TestParseScale(t *testing.T) {
 	}
 }
 
-func TestDecodeProgressiveReturnsUnsupported(t *testing.T) {
+func TestDecodeProgressiveRaster(t *testing.T) {
 	data, err := os.ReadFile("tests/testdata/test_progressive.jpg")
 	if err != nil {
 		t.Skipf("test fixture missing: %v", err)
@@ -3143,9 +3155,13 @@ func TestDecodeProgressiveReturnsUnsupported(t *testing.T) {
 		t.Fatalf("DecodeConfig progressive = %dx%d, want %dx%d", imgCfg.Width, imgCfg.Height, cfg.Width, cfg.Height)
 	}
 
-	_, err = djpeg.DecodeRaster(bytes.NewReader(data))
-	if !errors.Is(err, djpeg.ErrUnsupported) {
-		t.Fatalf("DecodeRaster error = %v, want ErrUnsupported", err)
+	raster, err := djpeg.DecodeRaster(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("DecodeRaster progressive failed: %v", err)
+	}
+	if raster.Rect.Dx() != cfg.Width || raster.Rect.Dy() != cfg.Height || raster.Format != djpeg.PixelFormatRGB24 {
+		t.Fatalf("DecodeRaster progressive raster = %dx%d %s, want %dx%d rgb24",
+			raster.Rect.Dx(), raster.Rect.Dy(), raster.Format, cfg.Width, cfg.Height)
 	}
 }
 

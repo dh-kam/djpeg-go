@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	stdjpeg "image/jpeg"
 	"io"
 	"math"
 	"strings"
@@ -260,6 +261,8 @@ type Decoder struct {
 	palette         color.Palette
 	internalDone    bool
 	started         bool
+	source          io.ReadSeeker
+	sourceOffset    int64
 	outputPass      bool
 	inputScan       int
 	outputScan      int
@@ -275,10 +278,17 @@ func NewDecoder(r io.Reader, opts ...Option) *Decoder {
 }
 
 func newDecoderWithOptions(r io.Reader, opts Options) *Decoder {
-	return &Decoder{
+	dec := &Decoder{
 		dec:  internaldecoder.New(r),
 		opts: opts,
 	}
+	if seeker, ok := r.(io.ReadSeeker); ok {
+		if offset, err := seeker.Seek(0, io.SeekCurrent); err == nil {
+			dec.source = seeker
+			dec.sourceOffset = offset
+		}
+	}
+	return dec
 }
 
 // ReadHeader reads JPEG metadata.
@@ -360,7 +370,7 @@ func (d *Decoder) Start() error {
 		return err
 	}
 	if d.dec.IsProgressive() {
-		return wrapDecodeError("start decompress", fmt.Errorf("jpeg: progressive JPEG not yet supported"))
+		return d.startProgressiveFallback()
 	}
 	if err := d.dec.StartDecompress(); err != nil {
 		return wrapDecodeError("start decompress", err)
@@ -450,6 +460,67 @@ func (d *Decoder) Start() error {
 // StartDecompress starts decompression using libjpeg-style naming.
 func (d *Decoder) StartDecompress() error {
 	return d.Start()
+}
+
+func (d *Decoder) startProgressiveFallback() error {
+	if d.opts.RawDataOut {
+		return wrapDecodeError("start decompress", fmt.Errorf("jpeg: progressive raw data output not yet supported"))
+	}
+	if d.quantizationRequested() {
+		return wrapDecodeError("start decompress", fmt.Errorf("jpeg: progressive quantized output not yet supported"))
+	}
+	if _, enabled, err := d.opts.scaleSize(); err != nil {
+		return err
+	} else if enabled {
+		return wrapDecodeError("start decompress", fmt.Errorf("jpeg: progressive scaled output not yet supported"))
+	}
+	if d.source == nil {
+		return wrapDecodeError("start decompress", fmt.Errorf("jpeg: progressive scanline fallback requires seekable input"))
+	}
+	if _, err := d.source.Seek(d.sourceOffset, io.SeekStart); err != nil {
+		return fmt.Errorf("%w: seek progressive input: %v", ErrInvalidOption, err)
+	}
+	img, err := stdjpeg.Decode(d.source)
+	if err != nil {
+		return wrapDecodeError("decode progressive", err)
+	}
+	format := d.header.PixelFormat
+	switch format {
+	case PixelFormatGray8, PixelFormatRGB24, PixelFormatYCbCr24, PixelFormatCMYK32:
+	default:
+		return fmt.Errorf("%w: progressive output pixel format %s is not supported", ErrUnsupported, format)
+	}
+	raster, err := rasterFromImage(img, format)
+	if err != nil {
+		return err
+	}
+	d.scaled = raster
+	d.scaledNextRow = 0
+	d.quantSource = nil
+	d.palette = nil
+	d.rawBufferedRows = nil
+	d.rawBufferedAll = nil
+	d.rawBufferedNext = 0
+	d.started = true
+	d.internalDone = true
+	d.outputPass = !d.opts.BufferedImage
+	d.inputScan = d.dec.InputScanNumber()
+	if d.inputScan <= 0 {
+		d.inputScan = 1
+	}
+	d.outputScan = d.inputScan
+	d.inputComplete = true
+	d.output = d.header
+	d.output.Width = raster.Rect.Dx()
+	d.output.Height = raster.Rect.Dy()
+	d.output.Components = raster.Format.Channels()
+	d.output.Stride = raster.Stride
+	d.output.PixelFormat = raster.Format
+	d.output.InputComplete = true
+	if d.opts.BufferedImage {
+		d.outputPass = false
+	}
+	return nil
 }
 
 // CalcOutputDimensions computes output dimensions without starting output.
