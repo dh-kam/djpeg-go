@@ -274,21 +274,20 @@ the libjpeg-style scaled-IDCT output path for both raster and raw component
 output.
 
 `WithOutputGamma` and `WithBlockSmoothing` mirror libjpeg decompressor
-parameters. Progressive scanline output is available through a pure Go fallback
-path, including scaled and quantized raster output. Progressive raw component
-output is also available for one-shot APIs and seekable low-level decoder
-inputs. Progressive Huffman coefficient output is supported through
+parameters. Progressive Huffman scanline and raw component output use the pure
+Go decoder path, including low-level `Decoder` use with non-seekable readers.
+Scaled and quantized progressive raster output are available through the same
+public facade. Progressive Huffman coefficient output is supported through
 `DecodeCoefficients` and `ReadCoefficients`; progressive arithmetic coefficient
 output is still reported as `ErrUnsupported`. One-shot APIs buffer non-seekable
-readers as needed; low-level `Decoder` progressive scanline and raw output
-requires a seekable input.
+readers as needed.
 
 ## Buffered-Image Output Passes
 
 `WithBufferedImage` mirrors libjpeg's `buffered_image` mode at the public
 facade level. After `StartDecompress`, call `StartOutput`, read scanlines, and
-then call `FinishOutput`. The decoder keeps a baseline image raster so callers
-can replay output passes or switch quantized colormaps between passes.
+then call `FinishOutput`. The decoder keeps an image raster so callers can
+replay output passes or switch quantized colormaps between passes.
 
 ```go
 dec := libjpeg.NewDecoder(r, libjpeg.WithBufferedImage())

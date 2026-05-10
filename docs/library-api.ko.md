@@ -270,21 +270,20 @@ decoder는 raster와 raw component output 모두에서 libjpeg 스타일 scaled-
 output 경로를 사용합니다.
 
 `WithOutputGamma`와 `WithBlockSmoothing`은 libjpeg decompressor parameter에
-대응합니다. Progressive scanline output은 pure Go fallback 경로로 사용할 수 있으며,
-scaled 및 quantized raster output도 포함합니다. Progressive raw component output도
-one-shot API와 seek 가능한 low-level decoder input에서 사용할 수 있습니다.
-Progressive Huffman coefficient output은 `DecodeCoefficients`와
+대응합니다. Progressive Huffman scanline 및 raw component output은 pure Go decoder
+경로를 사용하며, non-seekable reader를 쓰는 low-level `Decoder` 경로도 포함합니다.
+Scaled 및 quantized progressive raster output도 같은 public facade에서 사용할 수
+있습니다. Progressive Huffman coefficient output은 `DecodeCoefficients`와
 `ReadCoefficients`로 지원하고, progressive arithmetic coefficient output은 아직
 `ErrUnsupported`로 보고합니다. one-shot API는 필요 시 non-seekable reader를
-buffering하고, low-level `Decoder`의 progressive scanline 및 raw output은 seek
-가능한 input이 필요합니다.
+buffering합니다.
 
 ## Buffered-Image Output Pass
 
 `WithBufferedImage`는 libjpeg의 `buffered_image` mode를 public facade 수준에서
 대응합니다. `StartDecompress` 이후 `StartOutput`을 호출하고 scanline을 읽은 다음
-`FinishOutput`을 호출합니다. decoder는 baseline image raster를 보관하므로 output
-pass를 반복하거나 pass 사이에서 quantized colormap을 바꿀 수 있습니다.
+`FinishOutput`을 호출합니다. decoder는 image raster를 보관하므로 output pass를
+반복하거나 pass 사이에서 quantized colormap을 바꿀 수 있습니다.
 
 ```go
 dec := libjpeg.NewDecoder(r, libjpeg.WithBufferedImage())

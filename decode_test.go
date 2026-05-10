@@ -1757,8 +1757,16 @@ func TestDecodeProgressiveRawComponents(t *testing.T) {
 	if _, err := nonSeekable.ReadHeader(); err != nil {
 		t.Fatalf("ReadHeader progressive raw non-seekable failed: %v", err)
 	}
-	if err := nonSeekable.StartDecompress(); !errors.Is(err, djpeg.ErrUnsupported) {
-		t.Fatalf("StartDecompress progressive raw non-seekable error = %v, want ErrUnsupported", err)
+	if err := nonSeekable.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress progressive raw non-seekable failed: %v", err)
+	}
+	nonSeekableAll, err := nonSeekable.ReadRawData()
+	if err != nil {
+		t.Fatalf("ReadRawData progressive raw non-seekable failed: %v", err)
+	}
+	assertRawComponentsEqual(t, nonSeekableAll, all, "progressive raw non-seekable")
+	if err := nonSeekable.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress progressive raw non-seekable failed: %v", err)
 	}
 }
 
@@ -3343,8 +3351,19 @@ func TestDecodeProgressiveRaster(t *testing.T) {
 	if _, err := dec.ReadHeader(); err != nil {
 		t.Fatalf("ReadHeader progressive non-seekable failed: %v", err)
 	}
-	if err := dec.StartDecompress(); !errors.Is(err, djpeg.ErrUnsupported) {
-		t.Fatalf("StartDecompress progressive non-seekable error = %v, want ErrUnsupported", err)
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress progressive non-seekable failed: %v", err)
+	}
+	out := dec.OutputConfig()
+	row := make([]byte, out.Stride)
+	if n, err := dec.ReadScanlines([][]byte{row}); err != nil || n != 1 {
+		t.Fatalf("ReadScanlines progressive non-seekable rows=%d err=%v, want 1 nil", n, err)
+	}
+	if !bytes.Equal(row, raster.Pix[:raster.Stride]) {
+		t.Fatal("ReadScanlines progressive non-seekable first row differs from DecodeRaster")
+	}
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress progressive non-seekable failed: %v", err)
 	}
 }
 

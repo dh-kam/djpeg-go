@@ -392,8 +392,19 @@ func (d *Decoder) Start() error {
 		return err
 	}
 	if d.dec.IsProgressive() {
-		return d.startProgressiveFallback()
+		err := d.startInternal()
+		if err == nil {
+			return nil
+		}
+		if d.source != nil && errors.Is(err, ErrUnsupported) {
+			return d.startProgressiveFallback()
+		}
+		return err
 	}
+	return d.startInternal()
+}
+
+func (d *Decoder) startInternal() error {
 	if err := d.dec.StartDecompress(); err != nil {
 		return wrapDecodeError("start decompress", err)
 	}
@@ -1278,6 +1289,10 @@ func (d *Decoder) Finish() error {
 	if d.internalDone {
 		return nil
 	}
+	if d.dec.IsProgressive() && d.dec.InputComplete() {
+		d.internalDone = true
+		return nil
+	}
 	if err := d.dec.FinishDecompress(); err != nil {
 		return wrapDecodeError("finish decompress", err)
 	}
@@ -1316,9 +1331,8 @@ func (d *Decoder) Abort() {
 }
 
 // StartOutput starts one buffered-image output pass. It mirrors libjpeg's
-// jpeg_start_output at the facade level. The current implementation supports
-// baseline images by replaying a buffered raster; progressive image decoding is
-// still reported as ErrUnsupported by StartDecompress.
+// jpeg_start_output at the facade level by replaying decoder-buffered raster or
+// raw component output.
 func (d *Decoder) StartOutput(scanNumber int) (bool, error) {
 	if !d.opts.BufferedImage {
 		return false, fmt.Errorf("%w: StartOutput requires WithBufferedImage", ErrInvalidOption)
