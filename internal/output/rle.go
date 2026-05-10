@@ -23,6 +23,7 @@ type rleWriter struct {
 	rows    [][]byte // buffered rows (top-down)
 	rowIdx  int
 	indexed bool
+	ncolors int
 }
 
 const (
@@ -45,14 +46,18 @@ func (r *rleWriter) Start(w io.Writer, info *ImageInfo) error {
 	if info.Width > 32767 || info.Height > 32767 {
 		return fmt.Errorf("rle: image too large for RLE format (%dx%d)", info.Width, info.Height)
 	}
-	if info.ColorSpace != ColorSpaceGrayscale && info.ColorSpace != ColorSpaceRGB {
+	if info.ColorSpace != ColorSpaceGrayscale && !colorSpaceCanWriteRGB(info.ColorSpace) {
 		return fmt.Errorf("rle: unsupported color space")
 	}
-	if info.NumComponents != 1 && info.NumComponents != 3 {
+	r.ncolors = info.NumComponents
+	if colorSpaceCanWriteRGB(info.ColorSpace) {
+		r.ncolors = 3
+	}
+	if r.ncolors != 1 && r.ncolors != 3 {
 		return fmt.Errorf("rle: unsupported number of components (%d)", info.NumComponents)
 	}
 
-	rowBytes := info.Width * info.NumComponents
+	rowBytes := info.Width * r.ncolors
 	r.indexed = info.QuantizeColors && info.Colormap != nil
 	if r.indexed {
 		rowBytes = info.Width
@@ -70,6 +75,9 @@ func (r *rleWriter) WriteScanline(line []byte) error {
 	if r.rowIdx >= r.info.Height {
 		return fmt.Errorf("rle: too many scanlines")
 	}
+	if !r.indexed && colorSpaceCanWriteRGB(r.info.ColorSpace) {
+		line = rgbScanline(line, r.info.Width, r.info.ColorSpace)
+	}
 	copy(r.rows[r.rowIdx], line)
 	r.rowIdx++
 	return nil
@@ -77,7 +85,7 @@ func (r *rleWriter) WriteScanline(line []byte) error {
 
 // Finish writes the complete RLE file in bottom-up order with run-length encoding.
 func (r *rleWriter) Finish() error {
-	ncolors := r.info.NumComponents
+	ncolors := r.ncolors
 	ncmap := 0
 	var cmapData []uint16
 
@@ -85,6 +93,9 @@ func (r *rleWriter) Finish() error {
 	if r.info.QuantizeColors && r.info.Colormap != nil {
 		ncolors = 1
 		cm := r.info.Colormap
+		if colorSpaceCanWriteRGB(r.info.ColorSpace) {
+			cm = rgbColormap(cm, r.info.ColorSpace)
+		}
 		ncmap = len(cm.Maps)
 		cmapLen := 256
 		cmapData = make([]uint16, ncmap*cmapLen)

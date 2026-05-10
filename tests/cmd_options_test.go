@@ -204,6 +204,37 @@ func TestOutputColorSpaceOptionWritesPPMForGrayscaleInput(t *testing.T) {
 	}
 }
 
+func TestOutputColorSpaceYCbCrOptionWritesPPM(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile("testdata/test_420.jpg")
+	if err != nil {
+		t.Skip("test_420.jpg not available:", err)
+	}
+
+	ppm := decompressForOptionTest(t, data, &djpegcli.Options{
+		Format:           output.FormatPPM,
+		OutputColorSpace: "ycbcr",
+	})
+
+	kind, width, height, components, pixels, err := parsePNMPixels(ppm)
+	if err != nil {
+		t.Fatalf("parsing YCbCr PPM output: %v", err)
+	}
+	if kind != "P6" {
+		t.Fatalf("PNM kind = %q, want P6", kind)
+	}
+	if width <= 0 || height <= 0 {
+		t.Fatalf("dimensions = %dx%d, want positive", width, height)
+	}
+	if components != 3 {
+		t.Fatalf("components = %d, want RGB PPM", components)
+	}
+	if len(pixels) != width*height*components {
+		t.Fatalf("pixel length = %d, want %d", len(pixels), width*height*components)
+	}
+}
+
 func TestMaxMemoryOptionAllowsDecodeWithSufficientLimit(t *testing.T) {
 	t.Parallel()
 
@@ -386,6 +417,23 @@ func TestGIFOutputAutoQuantizesRGB(t *testing.T) {
 
 	gifData := decompressForOptionTest(t, data, &djpegcli.Options{
 		Format: output.FormatGIF,
+	})
+	if len(gifData) < 6 || string(gifData[:6]) != "GIF87a" {
+		t.Fatalf("GIF header = %q, want GIF87a", gifData[:min(len(gifData), 6)])
+	}
+}
+
+func TestGIFOutputAutoQuantizesYCbCr(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile("testdata/test_420.jpg")
+	if err != nil {
+		t.Skip("test_420.jpg not available:", err)
+	}
+
+	gifData := decompressForOptionTest(t, data, &djpegcli.Options{
+		Format:           output.FormatGIF,
+		OutputColorSpace: "ycbcr",
 	})
 	if len(gifData) < 6 || string(gifData[:6]) != "GIF87a" {
 		t.Fatalf("GIF header = %q, want GIF87a", gifData[:min(len(gifData), 6)])

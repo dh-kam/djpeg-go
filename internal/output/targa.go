@@ -34,7 +34,7 @@ func (t *targaWriter) Start(w io.Writer, info *ImageInfo) error {
 		bitsPerPixel = 8
 		useColormap = false
 
-	case ColorSpaceRGB:
+	case ColorSpaceRGB, ColorSpaceYCbCr, ColorSpaceBigGamutYCbCr, ColorSpaceCMYK, ColorSpaceYCCK:
 		if info.QuantizeColors && info.Colormap != nil {
 			numColors = info.Colormap.NumColors
 			if numColors > 256 {
@@ -77,7 +77,7 @@ func (t *targaWriter) Start(w io.Writer, info *ImageInfo) error {
 
 	// Write the colormap if present (BGR order)
 	if useColormap && info.Colormap != nil {
-		cm := info.Colormap
+		cm := rgbColormap(info.Colormap, info.ColorSpace)
 		for i := 0; i < numColors; i++ {
 			// TGA colormap is BGR
 			b := cm.Maps[2][i]
@@ -90,7 +90,7 @@ func (t *targaWriter) Start(w io.Writer, info *ImageInfo) error {
 	}
 
 	// Allocate row buffer if needed for RGB -> BGR conversion
-	if info.ColorSpace == ColorSpaceRGB && !useColormap {
+	if colorSpaceCanWriteRGB(info.ColorSpace) && !useColormap {
 		t.buf = make([]byte, info.Width*3)
 	}
 
@@ -116,13 +116,14 @@ func (t *targaWriter) WriteScanline(line []byte) error {
 			out = line
 		}
 
-	case ColorSpaceRGB:
+	case ColorSpaceRGB, ColorSpaceYCbCr, ColorSpaceBigGamutYCbCr, ColorSpaceCMYK, ColorSpaceYCCK:
 		if t.info.QuantizeColors {
 			// Colormapped: indices are written directly (already handled by
 			// the colormap in the header)
 			out = line
 		} else {
 			// Convert RGB to BGR
+			line = rgbScanline(line, t.info.Width, t.info.ColorSpace)
 			for i := 0; i < t.info.Width; i++ {
 				t.buf[i*3+0] = line[i*3+2] // B
 				t.buf[i*3+1] = line[i*3+1] // G

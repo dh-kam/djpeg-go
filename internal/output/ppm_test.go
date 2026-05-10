@@ -13,10 +13,10 @@ func TestPPMWriterColor(t *testing.T) {
 	w := &ppmWriter{}
 
 	info := &ImageInfo{
-		Width:        2,
-		Height:       2,
+		Width:         2,
+		Height:        2,
 		NumComponents: 3,
-		ColorSpace:   ColorSpaceRGB,
+		ColorSpace:    ColorSpaceRGB,
 	}
 
 	if err := w.Start(&buf, info); err != nil {
@@ -71,10 +71,10 @@ func TestPPMWriterGrayscale(t *testing.T) {
 	w := &ppmWriter{}
 
 	info := &ImageInfo{
-		Width:        4,
-		Height:       1,
+		Width:         4,
+		Height:        1,
 		NumComponents: 1,
-		ColorSpace:   ColorSpaceGrayscale,
+		ColorSpace:    ColorSpaceGrayscale,
 	}
 
 	if err := w.Start(&buf, info); err != nil {
@@ -121,10 +121,10 @@ func TestPPMWriterStartFinish(t *testing.T) {
 	w := &ppmWriter{}
 
 	info := &ImageInfo{
-		Width:        1,
-		Height:       1,
+		Width:         1,
+		Height:        1,
 		NumComponents: 3,
-		ColorSpace:   ColorSpaceRGB,
+		ColorSpace:    ColorSpaceRGB,
 	}
 
 	// Test full lifecycle
@@ -187,5 +187,76 @@ func TestPPMWriterWithColormap(t *testing.T) {
 		if pixelData[i] != w {
 			t.Errorf("pixel[%d] = %d, want %d", i, pixelData[i], w)
 		}
+	}
+}
+
+func TestPPMWriterConvertsExtendedColorSpacesToRGB(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		colorSpace ColorSpace
+		components int
+		row        []byte
+		want       []byte
+	}{
+		{
+			name:       "ycbcr",
+			colorSpace: ColorSpaceYCbCr,
+			components: 3,
+			row:        []byte{128, 128, 128},
+			want:       []byte{128, 128, 128},
+		},
+		{
+			name:       "big_gamut_ycbcr",
+			colorSpace: ColorSpaceBigGamutYCbCr,
+			components: 3,
+			row:        []byte{128, 128, 128},
+			want:       []byte{129, 128, 129},
+		},
+		{
+			name:       "cmyk",
+			colorSpace: ColorSpaceCMYK,
+			components: 4,
+			row:        []byte{0, 255, 255, 0},
+			want:       []byte{255, 0, 0},
+		},
+		{
+			name:       "ycck",
+			colorSpace: ColorSpaceYCCK,
+			components: 4,
+			row:        []byte{255, 128, 128, 0},
+			want:       []byte{255, 255, 255},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+			w := &ppmWriter{}
+			info := &ImageInfo{
+				Width:         1,
+				Height:        1,
+				NumComponents: tt.components,
+				ColorSpace:    tt.colorSpace,
+			}
+			if err := w.Start(&buf, info); err != nil {
+				t.Fatalf("Start failed: %v", err)
+			}
+			if err := w.WriteScanline(tt.row); err != nil {
+				t.Fatalf("WriteScanline failed: %v", err)
+			}
+			if err := w.Finish(); err != nil {
+				t.Fatalf("Finish failed: %v", err)
+			}
+
+			headerEnd := bytes.Index(buf.Bytes(), []byte("255\n")) + 4
+			if got := buf.Bytes()[headerEnd:]; !bytes.Equal(got, tt.want) {
+				t.Fatalf("converted pixels = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

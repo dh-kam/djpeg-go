@@ -1006,9 +1006,9 @@ CLI output flags such as `--ppm`, `--bmp`, `--os2`, `--targa`, `--rle`,
 `--gif`, and `--gif0` are not part of the public decode facade yet. Use
 `DecodeRaster` and write your desired output format in application code.
 
-The `cmd/djpeg` output writers currently accept Gray8 and RGB24 rasters. Other
-`--output-colorspace` values are exposed for parity/debugging and library API
-coverage, but may require `DecodeRaster` until matching command writers exist.
+The `cmd/djpeg` output writers accept Gray8, RGB24, YCbCr24,
+BigGamutYCbCr24, CMYK32, and YCCK32 rasters. File formats that cannot store
+those sample spaces directly convert them to RGB while writing.
 
 ## External Module Setup
 

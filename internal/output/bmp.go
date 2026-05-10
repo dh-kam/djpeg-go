@@ -29,7 +29,7 @@ func (b *bmpWriter) Start(w io.Writer, info *ImageInfo) error {
 	switch info.ColorSpace {
 	case ColorSpaceGrayscale:
 		b.rowWidth = (info.Width + 3) &^ 3 // 1 byte per pixel, pad to 4
-	case ColorSpaceRGB:
+	case ColorSpaceRGB, ColorSpaceYCbCr, ColorSpaceBigGamutYCbCr, ColorSpaceCMYK, ColorSpaceYCCK:
 		b.rowWidth = (info.Width*3 + 3) &^ 3 // 3 bytes per pixel, pad to 4
 	default:
 		return fmt.Errorf("bmp: unsupported color space %d", info.ColorSpace)
@@ -68,7 +68,7 @@ func (b *bmpWriter) WriteScanline(line []byte) error {
 		// RGB -> BGR conversion, or colormapped (palette index) passthrough.
 		if b.info.QuantizeColors && b.info.Colormap != nil {
 			// Quantized color: indices map to RGB palette entries.
-			cm := b.info.Colormap
+			cm := rgbColormap(b.info.Colormap, b.info.ColorSpace)
 			map0 := cm.Maps[0]
 			map1 := cm.Maps[1]
 			map2 := cm.Maps[2]
@@ -79,6 +79,7 @@ func (b *bmpWriter) WriteScanline(line []byte) error {
 			}
 		} else {
 			// Full-color RGB: swap R and B channels for BGR.
+			line = rgbScanline(line, b.info.Width, b.info.ColorSpace)
 			for i := 0; i < b.info.Width; i++ {
 				row[i*3+0] = line[i*3+2] // B
 				row[i*3+1] = line[i*3+1] // G
@@ -139,7 +140,7 @@ func (b *bmpWriter) headerLayout() (bitsPerPixel, cmapEntries int) {
 	switch b.info.ColorSpace {
 	case ColorSpaceGrayscale:
 		return 8, 256
-	case ColorSpaceRGB:
+	case ColorSpaceRGB, ColorSpaceYCbCr, ColorSpaceBigGamutYCbCr, ColorSpaceCMYK, ColorSpaceYCCK:
 		if b.info.QuantizeColors {
 			return 8, 256
 		}
@@ -220,12 +221,13 @@ func (b *bmpWriter) writeColormap(cmapEntries, entrySize int) error {
 					return fmt.Errorf("bmp: writing colormap: %w", err)
 				}
 			}
-		case ColorSpaceRGB:
-			map0 := cm.Maps[0]
-			map1 := cm.Maps[1]
-			map2 := cm.Maps[2]
+		case ColorSpaceRGB, ColorSpaceYCbCr, ColorSpaceBigGamutYCbCr, ColorSpaceCMYK, ColorSpaceYCCK:
+			rgbMap := rgbColormap(cm, b.info.ColorSpace)
+			map0 := rgbMap.Maps[0]
+			map1 := rgbMap.Maps[1]
+			map2 := rgbMap.Maps[2]
 			for i := 0; i < cmapEntries; i++ {
-				if i < cm.NumColors {
+				if i < rgbMap.NumColors {
 					entry[0] = map2[i] // B
 					entry[1] = map1[i] // G
 					entry[2] = map0[i] // R

@@ -62,14 +62,13 @@ func (g *gifWriter) Start(w io.Writer, info *ImageInfo) error {
 	g.info = info
 
 	// GIF requires a color palette (indexed color). Grayscale is OK (1 channel).
-	if info.ColorSpace != ColorSpaceGrayscale && info.ColorSpace != ColorSpaceRGB {
+	if info.ColorSpace != ColorSpaceGrayscale && !colorSpaceCanWriteRGB(info.ColorSpace) {
 		return fmt.Errorf("gif: unsupported color space")
 	}
 
-	// If RGB without quantization, GIF cannot represent it directly.
-	// For now we require quantization for RGB images.
-	if info.ColorSpace == ColorSpaceRGB && !info.QuantizeColors {
-		return fmt.Errorf("gif: RGB images require color quantization (use -colors N)")
+	// If color output is not quantized, GIF cannot represent it directly.
+	if colorSpaceCanWriteRGB(info.ColorSpace) && !info.QuantizeColors {
+		return fmt.Errorf("gif: color images require color quantization (use -colors N)")
 	}
 
 	// Allocate row buffer
@@ -135,8 +134,8 @@ func (g *gifWriter) Finish() error {
 		var r, gv, b byte
 		if i < numColors {
 			if g.info.QuantizeColors && g.info.Colormap != nil {
-				cm := g.info.Colormap
-				if g.info.ColorSpace == ColorSpaceRGB && len(cm.Maps) >= 3 {
+				cm := rgbColormap(g.info.Colormap, g.info.ColorSpace)
+				if colorSpaceCanWriteRGB(g.info.ColorSpace) && len(cm.Maps) >= 3 {
 					r = cm.Maps[0][i]
 					gv = cm.Maps[1][i]
 					b = cm.Maps[2][i]

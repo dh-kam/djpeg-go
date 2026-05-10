@@ -287,8 +287,16 @@ func Decompress(input io.Reader, out io.Writer, opts *Options) error {
 		colorSpace = output.ColorSpaceGrayscale
 	case djpeg.PixelFormatRGB24:
 		colorSpace = output.ColorSpaceRGB
+	case djpeg.PixelFormatYCbCr24:
+		colorSpace = output.ColorSpaceYCbCr
+	case djpeg.PixelFormatBigGamutYCbCr24:
+		colorSpace = output.ColorSpaceBigGamutYCbCr
+	case djpeg.PixelFormatCMYK32:
+		colorSpace = output.ColorSpaceCMYK
+	case djpeg.PixelFormatYCCK32:
+		colorSpace = output.ColorSpaceYCCK
 	default:
-		return fmt.Errorf("%w: cmd/djpeg output writers do not support %s pixels yet", djpeg.ErrUnsupported, outputConfig.PixelFormat)
+		return fmt.Errorf("%w: cmd/djpeg output writers do not support %s pixels", djpeg.ErrUnsupported, outputConfig.PixelFormat)
 	}
 
 	info := &output.ImageInfo{
@@ -388,7 +396,7 @@ func prepareQuantization(opts *Options, info *output.ImageInfo, colormap *output
 
 	desiredColors := opts.NumColors
 	quantize := desiredColors > 0 || colormap != nil
-	if (opts.Format == output.FormatGIF || opts.Format == output.FormatGIF0) && info.ColorSpace == output.ColorSpaceRGB {
+	if (opts.Format == output.FormatGIF || opts.Format == output.FormatGIF0) && colorSpaceNeedsGIFPalette(info.ColorSpace) {
 		quantize = true
 		if desiredColors == 0 && colormap == nil {
 			desiredColors = 256
@@ -419,6 +427,15 @@ func prepareQuantization(opts *Options, info *output.ImageInfo, colormap *output
 		Dither:        dither,
 		OnePass:       opts.OnePass || opts.Fast,
 	}, nil
+}
+
+func colorSpaceNeedsGIFPalette(colorSpace output.ColorSpace) bool {
+	switch colorSpace {
+	case output.ColorSpaceRGB, output.ColorSpaceYCbCr, output.ColorSpaceBigGamutYCbCr, output.ColorSpaceCMYK, output.ColorSpaceYCCK:
+		return true
+	default:
+		return false
+	}
 }
 
 func readDecodedRows(dec *djpeg.Decoder, outputHeight, rowStride int) ([][]byte, error) {

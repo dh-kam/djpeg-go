@@ -997,10 +997,9 @@ flag는 아직 public decode facade에 포함하지 않았습니다. 라이브�
 `DecodeRaster`로 픽셀을 얻은 뒤 application code에서 원하는 output format으로
 쓰세요.
 
-`cmd/djpeg` output writer는 현재 Gray8과 RGB24 raster를 받습니다. 다른
-`--output-colorspace` 값은 parity/debug 및 library API coverage를 위해 노출되어
-있지만, 대응 command writer가 추가되기 전까지는 `DecodeRaster` 사용이 필요할 수
-있습니다.
+`cmd/djpeg` output writer는 Gray8, RGB24, YCbCr24, BigGamutYCbCr24, CMYK32,
+YCCK32 raster를 받습니다. 해당 sample space를 직접 저장할 수 없는 file format은
+쓰기 단계에서 RGB로 변환합니다.
 
 ## 외부 모듈에서 사용하기
 

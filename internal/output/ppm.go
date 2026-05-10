@@ -23,7 +23,7 @@ func (p *ppmWriter) Start(w io.Writer, info *ImageInfo) error {
 		if _, err := io.WriteString(w, header); err != nil {
 			return fmt.Errorf("ppm: writing header: %w", err)
 		}
-	case ColorSpaceRGB:
+	case ColorSpaceRGB, ColorSpaceYCbCr, ColorSpaceBigGamutYCbCr, ColorSpaceCMYK, ColorSpaceYCCK:
 		// P6 binary PPM: "P6\nwidth height\nmaxval\n"
 		header := fmt.Sprintf("P6\n%d %d\n255\n", info.Width, info.Height)
 		if _, err := io.WriteString(w, header); err != nil {
@@ -46,7 +46,7 @@ func (p *ppmWriter) WriteScanline(line []byte) error {
 	if p.info.QuantizeColors && p.info.Colormap != nil {
 		out = p.demap(line)
 	} else {
-		out = line
+		out = rgbScanline(line, p.info.Width, p.info.ColorSpace)
 	}
 
 	if _, err := p.w.Write(out); err != nil {
@@ -75,6 +75,12 @@ func (p *ppmWriter) demap(line []byte) []byte {
 			out[i*3+0] = map0[idx]
 			out[i*3+1] = map1[idx]
 			out[i*3+2] = map2[idx]
+		}
+		return out
+	case ColorSpaceYCbCr, ColorSpaceBigGamutYCbCr, ColorSpaceCMYK, ColorSpaceYCCK:
+		out := make([]byte, len(line)*3)
+		for i, idx := range line {
+			out[i*3+0], out[i*3+1], out[i*3+2] = colormapEntryToRGB(cm, idx, p.info.ColorSpace)
 		}
 		return out
 	default:
