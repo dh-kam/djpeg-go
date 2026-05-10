@@ -674,11 +674,26 @@ func TestRasterCMYKFormat(t *testing.T) {
 	if raster.Format.String() != "cmyk32" {
 		t.Fatalf("CMYK string = %q, want cmyk32", raster.Format.String())
 	}
-	if raster.ColorModel() == nil {
-		t.Fatal("CMYK ColorModel is nil")
+	if raster.ColorModel() != color.CMYKModel {
+		t.Fatalf("CMYK ColorModel = %T, want color.CMYKModel", raster.ColorModel())
 	}
 	if raster.RGBA().Bounds().Dx() != 1 {
 		t.Fatal("CMYK RGBA conversion produced empty image")
+	}
+}
+
+func TestRasterYCCKColorModel(t *testing.T) {
+	raster := djpeg.NewRaster(1, 1, djpeg.PixelFormatYCCK32)
+	copy(raster.Pix, []byte{255, 128, 128, 0})
+
+	if raster.Format.Channels() != 4 {
+		t.Fatalf("YCCK channels = %d, want 4", raster.Format.Channels())
+	}
+	if raster.ColorModel() != color.CMYKModel {
+		t.Fatalf("YCCK ColorModel = %T, want color.CMYKModel", raster.ColorModel())
+	}
+	if _, ok := raster.At(0, 0).(color.CMYK); !ok {
+		t.Fatalf("YCCK At type = %T, want color.CMYK", raster.At(0, 0))
 	}
 }
 
@@ -1164,6 +1179,10 @@ func TestDecodeRasterYCCKQuantizedOutput(t *testing.T) {
 	if !cfg.Quantized || cfg.PixelFormat != djpeg.PixelFormatIndexed8 || cfg.ColorSpace != djpeg.ColorSpaceYCCK {
 		t.Fatalf("YCCK quantized config = %+v, want indexed8 ycck quantized output", cfg)
 	}
+	if cfg.ColorModel() != color.CMYKModel || cfg.ImageConfig().ColorModel != color.CMYKModel {
+		t.Fatalf("YCCK quantized color model = %T/%T, want color.CMYKModel",
+			cfg.ColorModel(), cfg.ImageConfig().ColorModel)
+	}
 
 	raster, err := djpeg.DecodeRaster(
 		bytes.NewReader(data),
@@ -1185,6 +1204,33 @@ func TestDecodeRasterYCCKQuantizedOutput(t *testing.T) {
 		if int(idx) >= len(raster.Palette) {
 			t.Fatalf("pixel %d index=%d outside palette length %d", i, idx, len(raster.Palette))
 		}
+	}
+}
+
+func TestDecodeRasterYCCKColorModel(t *testing.T) {
+	data := tinyAdobeCMYKJPEG(t, 2, [4]byte{0x11, 0x12, 0x13, 0x14})
+
+	cfg, err := djpeg.DecodeRasterConfig(bytes.NewReader(data), djpeg.WithOutputColorSpace(djpeg.ColorSpaceYCCK))
+	if err != nil {
+		t.Fatalf("DecodeRasterConfig YCCK failed: %v", err)
+	}
+	if cfg.PixelFormat != djpeg.PixelFormatYCCK32 || cfg.ColorSpace != djpeg.ColorSpaceYCCK {
+		t.Fatalf("YCCK config = %+v, want ycck/ycck32", cfg)
+	}
+	if cfg.ColorModel() != color.CMYKModel || cfg.ImageConfig().ColorModel != color.CMYKModel {
+		t.Fatalf("YCCK color model = %T/%T, want color.CMYKModel",
+			cfg.ColorModel(), cfg.ImageConfig().ColorModel)
+	}
+
+	raster, err := djpeg.DecodeRaster(bytes.NewReader(data), djpeg.WithOutputColorSpace(djpeg.ColorSpaceYCCK))
+	if err != nil {
+		t.Fatalf("DecodeRaster YCCK failed: %v", err)
+	}
+	if raster.ColorModel() != color.CMYKModel {
+		t.Fatalf("YCCK raster ColorModel = %T, want color.CMYKModel", raster.ColorModel())
+	}
+	if _, ok := raster.At(0, 0).(color.CMYK); !ok {
+		t.Fatalf("YCCK raster At type = %T, want color.CMYK", raster.At(0, 0))
 	}
 }
 

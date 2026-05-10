@@ -139,7 +139,7 @@ func (r *Raster) ColorModel() color.Model {
 		return color.RGBAModel
 	case PixelFormatGray8:
 		return color.GrayModel
-	case PixelFormatCMYK32:
+	case PixelFormatCMYK32, PixelFormatYCCK32:
 		return color.CMYKModel
 	default:
 		return color.RGBAModel

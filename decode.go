@@ -74,11 +74,19 @@ func (c Config) ColorModel() color.Model {
 	switch c.PixelFormat {
 	case PixelFormatGray8:
 		return color.GrayModel
-	case PixelFormatCMYK32:
+	case PixelFormatCMYK32, PixelFormatYCCK32:
 		return color.CMYKModel
+	case PixelFormatIndexed8:
+		switch c.ColorSpace {
+		case ColorSpaceGray:
+			return color.GrayModel
+		case ColorSpaceCMYK, ColorSpaceYCCK:
+			return color.CMYKModel
+		}
 	default:
 		return color.RGBAModel
 	}
+	return color.RGBAModel
 }
 
 // Decode decodes a JPEG into an image.Image.
