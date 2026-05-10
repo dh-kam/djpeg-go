@@ -73,7 +73,7 @@ func QuantizeRows(rows [][]byte, info *ImageInfo, opts QuantizeOptions) ([][]byt
 	if dither == DitherDefault {
 		dither = DitherFS
 	}
-	if info.ColorSpace == ColorSpaceRGB && dither == DitherOrdered && (opts.Colormap != nil || !opts.OnePass) {
+	if threeComponentQuantizeSpace(info.ColorSpace) && dither == DitherOrdered && (opts.Colormap != nil || !opts.OnePass) {
 		dither = DitherFS
 	}
 
@@ -100,7 +100,7 @@ func quantizeComponents(cs ColorSpace) (int, error) {
 	switch cs {
 	case ColorSpaceGrayscale:
 		return 1, nil
-	case ColorSpaceRGB:
+	case ColorSpaceRGB, ColorSpaceYCbCr:
 		return 3, nil
 	case ColorSpaceCMYK, ColorSpaceYCCK:
 		return 4, nil
@@ -124,14 +124,14 @@ func quantizeColormap(rows [][]byte, info *ImageInfo, opts QuantizeOptions) (*Co
 	if desired > 256 {
 		return nil, fmt.Errorf("quantize: cannot quantize to more than 256 colors")
 	}
-	if opts.Colormap == nil && info.ColorSpace == ColorSpaceRGB && desired < 8 {
-		return nil, fmt.Errorf("quantize: cannot quantize RGB output to fewer than 8 colors")
+	if opts.Colormap == nil && threeComponentQuantizeSpace(info.ColorSpace) && desired < 8 {
+		return nil, fmt.Errorf("quantize: cannot quantize 3-component output to fewer than 8 colors")
 	}
 
 	switch info.ColorSpace {
 	case ColorSpaceGrayscale:
 		return makeGrayPalette(desired), nil
-	case ColorSpaceRGB:
+	case ColorSpaceRGB, ColorSpaceYCbCr:
 		if !opts.OnePass {
 			return makeRGBMedianCutPalette(rows, info, desired)
 		}
@@ -170,7 +170,7 @@ func normalizeColormap(cm *Colormap, cs ColorSpace) (*Colormap, error) {
 			copy(gray, cm.Maps[0][:cm.NumColors])
 		}
 		return &Colormap{Maps: [][]uint8{gray}, NumColors: cm.NumColors}, nil
-	case ColorSpaceRGB:
+	case ColorSpaceRGB, ColorSpaceYCbCr:
 		r := make([]byte, cm.NumColors)
 		g := make([]byte, cm.NumColors)
 		b := make([]byte, cm.NumColors)
@@ -208,6 +208,10 @@ func normalizeColormap(cm *Colormap, cs ColorSpace) (*Colormap, error) {
 	default:
 		return nil, fmt.Errorf("quantize: unsupported color space %d", cs)
 	}
+}
+
+func threeComponentQuantizeSpace(cs ColorSpace) bool {
+	return cs == ColorSpaceRGB || cs == ColorSpaceYCbCr
 }
 
 func makeGrayPalette(n int) *Colormap {

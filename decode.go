@@ -1501,13 +1501,15 @@ func outputColorSpaceForRaster(format PixelFormat) (internaloutput.ColorSpace, e
 		return internaloutput.ColorSpaceGrayscale, nil
 	case PixelFormatRGB24:
 		return internaloutput.ColorSpaceRGB, nil
+	case PixelFormatYCbCr24:
+		return internaloutput.ColorSpaceYCbCr, nil
 	case PixelFormatCMYK32:
 		return internaloutput.ColorSpaceCMYK, nil
 	case PixelFormatYCCK32:
 		return internaloutput.ColorSpaceYCCK, nil
 	default:
 		return internaloutput.ColorSpaceRGB,
-			fmt.Errorf("%w: quantized output supports gray, rgb, cmyk, and ycck output, got %s", ErrUnsupported, format)
+			fmt.Errorf("%w: quantized output supports gray, rgb, ycbcr, cmyk, and ycck output, got %s", ErrUnsupported, format)
 	}
 }
 
@@ -1539,6 +1541,15 @@ func outputColormapFromPalette(palette color.Palette, format PixelFormat) (*inte
 			blue[i] = byte(b >> 8)
 		}
 		return &internaloutput.Colormap{Maps: [][]uint8{red, green, blue}, NumColors: len(palette)}, nil
+	case PixelFormatYCbCr24:
+		luma := make([]uint8, len(palette))
+		cbMap := make([]uint8, len(palette))
+		crMap := make([]uint8, len(palette))
+		for i, c := range palette {
+			r, g, b, _ := c.RGBA()
+			luma[i], cbMap[i], crMap[i] = color.RGBToYCbCr(byte(r>>8), byte(g>>8), byte(b>>8))
+		}
+		return &internaloutput.Colormap{Maps: [][]uint8{luma, cbMap, crMap}, NumColors: len(palette)}, nil
 	case PixelFormatCMYK32:
 		cyan := make([]uint8, len(palette))
 		magenta := make([]uint8, len(palette))
@@ -1564,7 +1575,7 @@ func outputColormapFromPalette(palette color.Palette, format PixelFormat) (*inte
 		}
 		return &internaloutput.Colormap{Maps: [][]uint8{luma, cbMap, crMap, black}, NumColors: len(palette)}, nil
 	default:
-		return nil, fmt.Errorf("%w: quantized output supports gray, rgb, cmyk, and ycck output, got %s", ErrUnsupported, format)
+		return nil, fmt.Errorf("%w: quantized output supports gray, rgb, ycbcr, cmyk, and ycck output, got %s", ErrUnsupported, format)
 	}
 }
 
@@ -1598,7 +1609,11 @@ func paletteFromOutputColormap(cmap *internaloutput.Colormap, format PixelFormat
 	green := cmap.Maps[1]
 	blue := cmap.Maps[2]
 	for i := range palette {
-		palette[i] = color.RGBA{R: red[i], G: green[i], B: blue[i], A: 0xff}
+		r, g, b := red[i], green[i], blue[i]
+		if format == PixelFormatYCbCr24 {
+			r, g, b = color.YCbCrToRGB(red[i], green[i], blue[i])
+		}
+		palette[i] = color.RGBA{R: r, G: g, B: b, A: 0xff}
 	}
 	return palette
 }
@@ -1764,9 +1779,9 @@ func (d *Decoder) applyQuantizationToConfig(cfg *Config) error {
 		return nil
 	}
 	switch cfg.PixelFormat {
-	case PixelFormatGray8, PixelFormatRGB24, PixelFormatCMYK32, PixelFormatYCCK32:
+	case PixelFormatGray8, PixelFormatRGB24, PixelFormatYCbCr24, PixelFormatCMYK32, PixelFormatYCCK32:
 	default:
-		return fmt.Errorf("%w: quantized output supports gray, rgb, cmyk, and ycck output, got %s", ErrUnsupported, cfg.PixelFormat)
+		return fmt.Errorf("%w: quantized output supports gray, rgb, ycbcr, cmyk, and ycck output, got %s", ErrUnsupported, cfg.PixelFormat)
 	}
 	cfg.Components = 1
 	cfg.Stride = cfg.Width

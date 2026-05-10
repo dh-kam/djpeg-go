@@ -370,9 +370,10 @@ if err := dec.NewColormap(color.Palette{
 }
 ```
 
-Quantized output은 현재 grayscale, RGB, CMYK, YCCK output을 지원합니다. YCCK
-indexed raster의 `Raster.Palette`는 일반 `image.Image` 상호 운용을 위해 Go
-`color.CMYK` entry로 노출됩니다.
+Quantized output은 현재 grayscale, RGB, YCbCr, CMYK, YCCK output을
+지원합니다. YCbCr indexed raster의 `Raster.Palette`는 표시 가능한 RGB
+entry로 노출됩니다. YCCK indexed raster의 `Raster.Palette`는 일반
+`image.Image` 상호 운용을 위해 Go `color.CMYK` entry로 노출됩니다.
 
 ## Coefficient Output
 
