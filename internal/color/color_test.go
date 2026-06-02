@@ -1,6 +1,7 @@
 package color
 
 import (
+	"bytes"
 	"testing"
 )
 
@@ -94,6 +95,36 @@ func TestColorConverterYCbCrRGB(t *testing.T) {
 				t.Errorf("B = %d, want %d (diff %d > tolerance %d)", outB, tt.wantB, diff, tt.tolerance)
 			}
 		})
+	}
+}
+
+func TestColorConverterUsesRangeLimitOffset(t *testing.T) {
+	t.Parallel()
+
+	cc := &ColorConverter{}
+	cc.buildYccRGBTable()
+
+	rgbInput := [][][]byte{
+		{[]byte{255, 128, 0}},
+		{[]byte{128, 128, 128}},
+		{[]byte{128, 128, 128}},
+	}
+	rgbOut := [][]byte{make([]byte, 9)}
+	cc.yccRGBConvert(rgbInput, 0, rgbOut, 1)
+	if got, want := rgbOut[0], []byte{255, 255, 255, 128, 128, 128, 0, 0, 0}; !bytes.Equal(got, want) {
+		t.Fatalf("YCbCr neutral RGB = %v, want %v", got, want)
+	}
+
+	cmykInput := [][][]byte{
+		{[]byte{255, 128, 0}},
+		{[]byte{128, 128, 128}},
+		{[]byte{128, 128, 128}},
+		{[]byte{7, 8, 9}},
+	}
+	cmykOut := [][]byte{make([]byte, 12)}
+	cc.ycckCMYKConvert(cmykInput, 0, cmykOut, 1)
+	if got, want := cmykOut[0], []byte{0, 0, 0, 7, 127, 127, 127, 8, 255, 255, 255, 9}; !bytes.Equal(got, want) {
+		t.Fatalf("YCCK neutral CMYK = %v, want %v", got, want)
 	}
 }
 

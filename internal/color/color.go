@@ -240,9 +240,9 @@ func (cc *ColorConverter) yccRGBConvert(inputBuf [][][]byte, inputRow int, outpu
 			b := y + int(cc.CbBTab[cb])
 
 			idx := col * RGBPixelSize
-			out[idx+RGBRed] = rl[r]
-			out[idx+RGBGreen] = rl[g]
-			out[idx+RGBBlue] = rl[b]
+			out[idx+RGBRed] = RangeLimit(rl, r)
+			out[idx+RGBGreen] = RangeLimit(rl, g)
+			out[idx+RGBBlue] = RangeLimit(rl, b)
 		}
 	}
 }
@@ -373,9 +373,9 @@ func (cc *ColorConverter) ycckCMYKConvert(inputBuf [][][]byte, inputRow int, out
 			b := y + int(cc.CbBTab[cb])
 
 			idx := col * 4
-			out[idx+0] = rl[MaxJSample-r] // C = 1-R
-			out[idx+1] = rl[MaxJSample-g] // M = 1-G
-			out[idx+2] = rl[MaxJSample-b] // Y = 1-B
+			out[idx+0] = RangeLimit(rl, MaxJSample-r) // C = 1-R
+			out[idx+1] = RangeLimit(rl, MaxJSample-g) // M = 1-G
+			out[idx+2] = RangeLimit(rl, MaxJSample-b) // Y = 1-B
 			out[idx+3] = inK[col]          // K passes through
 		}
 	}
