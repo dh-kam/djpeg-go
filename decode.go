@@ -898,6 +898,7 @@ func (d *Decoder) Finish() error {
 		return nil
 	}
 	if d.dec.IsProgressive() && d.dec.InputComplete() {
+		d.dec.ReleaseDecodeBuffers()
 		d.internalDone = true
 		return nil
 	}

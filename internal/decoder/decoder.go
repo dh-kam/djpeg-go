@@ -792,13 +792,7 @@ func (dec *Decoder) decodeProgressiveCoefficientMCU(out []CoefficientComponent, 
 
 	if d.RestartInterval != 0 {
 		if dec.restartsToGo == 0 {
-			dec.savedState = huff.SavableState{}
-			dec.unreadMarker = 0
-			dec.insufficient = false
-			dec.restartsToGo = int(d.RestartInterval)
-			if d.ArithCodeFlag {
-				dec.resetArithmeticStats()
-			}
+			dec.processRestartMarker()
 		}
 		dec.restartsToGo--
 	}
@@ -1081,13 +1075,7 @@ func (dec *Decoder) decodeCoefficientMCURow(out []CoefficientComponent) error {
 		}
 		if d.RestartInterval != 0 {
 			if dec.restartsToGo == 0 {
-				dec.savedState = huff.SavableState{}
-				dec.unreadMarker = 0
-				dec.insufficient = false
-				dec.restartsToGo = int(d.RestartInterval)
-				if d.ArithCodeFlag {
-					dec.resetArithmeticStats()
-				}
+				dec.processRestartMarker()
 			}
 			dec.restartsToGo--
 		}
@@ -1324,13 +1312,55 @@ func (dec *Decoder) FinishDecompress() error {
 	err := dec.d.FinishDecompress()
 	if err != nil {
 		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			dec.releaseDecodeBuffers()
 			return nil
 		}
 		if err.Error() == "jpeg: data source suspension" {
+			dec.releaseDecodeBuffers()
 			return nil
 		}
+		return err
 	}
-	return err
+	dec.releaseDecodeBuffers()
+	return nil
+}
+
+// ReleaseDecodeBuffers drops decoder-owned scratch buffers after callers finish reading output.
+func (dec *Decoder) ReleaseDecodeBuffers() {
+	dec.releaseDecodeBuffers()
+}
+
+func (dec *Decoder) releaseDecodeBuffers() {
+	dec.scanData = nil
+	dec.permState = huff.BitReadState{}
+	dec.savedState = huff.SavableState{}
+	dec.workState = huff.BitReadWorkingState{}
+	dec.dcTables = nil
+	dec.acTables = nil
+	dec.arithDecoder = nil
+	dec.arithCompInfo = nil
+	dec.arithSrcPos = 0
+	dec.mcuMembership = nil
+	dec.multTablesISlow = nil
+	dec.multTablesIFast = nil
+	dec.multTablesFloat = nil
+	dec.rangeLimit = nil
+	dec.rlColorConv = nil
+	dec.outputBuf = [16]huff.BlockRow{}
+	dec.blocks = nil
+	dec.quantTables = nil
+	dec.vCbRow = nil
+	dec.vCrRow = nil
+	dec.vRRow = nil
+	dec.vKRow = nil
+	dec.colorConv = nil
+	dec.componentBuf = nil
+	dec.rowGroupCtr = 0
+	dec.rowGroupsAvail = 0
+	dec.currentIMCURow = 0
+	dec.totalIMCURows = 0
+	dec.allDecoded = false
+	dec.memoryUsed = 0
 }
 
 func (dec *Decoder) validateColorConversion() error {
@@ -1416,9 +1446,8 @@ func (dec *Decoder) readAllScanData() error {
 				i += 2
 				continue
 			}
-			if next >= 0xD0 && next <= 0xD7 {
-				copy(buf[i:], buf[i+2:])
-				end -= 2
+			if next >= marker.M_RST0 && next <= marker.M_RST7 {
+				i += 2
 				continue
 			}
 			if next == 0xFF {
@@ -1488,7 +1517,11 @@ func (dec *Decoder) readScanDataToMarker() error {
 				return err
 			}
 		case next >= marker.M_RST0 && next <= marker.M_RST7:
-			continue
+			var err error
+			buf, err = dec.appendScanDataBytes(buf, 0xFF, next)
+			if err != nil {
+				return err
+			}
 		default:
 			dec.d.UnreadMarker = int(next)
 			dec.scanData = buf
@@ -1525,13 +1558,7 @@ func (dec *Decoder) decodeIMCURow() {
 		}
 		if d.RestartInterval != 0 {
 			if dec.restartsToGo == 0 {
-				dec.savedState = huff.SavableState{}
-				dec.unreadMarker = 0
-				dec.insufficient = false
-				dec.restartsToGo = int(d.RestartInterval)
-				if d.ArithCodeFlag {
-					dec.resetArithmeticStats()
-				}
+				dec.processRestartMarker()
 			}
 			dec.restartsToGo--
 		}
@@ -1546,6 +1573,59 @@ func (dec *Decoder) decodeIMCURow() {
 		}
 		dec.routeBlocks(blocks, mcuCol)
 	}
+}
+
+func (dec *Decoder) processRestartMarker() {
+	dec.consumeRestartMarker()
+	dec.savedState = huff.SavableState{}
+	dec.insufficient = false
+	dec.restartsToGo = int(dec.d.RestartInterval)
+	dec.permState = huff.BitReadState{}
+	dec.workState.GetBuffer = 0
+	dec.workState.BitsLeft = 0
+	if dec.d.ArithCodeFlag {
+		dec.resetArithmeticStats()
+	}
+}
+
+func (dec *Decoder) consumeRestartMarker() {
+	if dec.unreadMarker >= marker.M_RST0 && dec.unreadMarker <= marker.M_RST7 {
+		dec.unreadMarker = 0
+		return
+	}
+	if dec.unreadMarker != 0 {
+		return
+	}
+
+	data := dec.workState.NextInputByte
+	bytesInBuffer := dec.workState.BytesInBuffer
+	for bytesInBuffer > 0 {
+		c := data[0]
+		data = data[1:]
+		bytesInBuffer--
+		if c != 0xFF {
+			continue
+		}
+		for bytesInBuffer > 0 && data[0] == 0xFF {
+			data = data[1:]
+			bytesInBuffer--
+		}
+		if bytesInBuffer == 0 {
+			break
+		}
+		next := data[0]
+		data = data[1:]
+		bytesInBuffer--
+		if next == 0x00 {
+			continue
+		}
+		if next < marker.M_RST0 || next > marker.M_RST7 {
+			dec.unreadMarker = next
+		}
+		break
+	}
+	dec.workState.NextInputByte = data
+	dec.workState.BytesInBuffer = bytesInBuffer
 }
 
 func (dec *Decoder) routeBlocks(blocks []huff.Block, mcuCol int) {

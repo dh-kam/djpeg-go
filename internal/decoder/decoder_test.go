@@ -25,6 +25,59 @@ func TestNewDecoder(t *testing.T) {
 	}
 }
 
+func TestFinishDecompressReleasesDecodeScratch(t *testing.T) {
+	data, err := os.ReadFile(testFixture("test_color.jpg"))
+	if err != nil {
+		t.Skipf("test fixture missing: %v", err)
+	}
+
+	dec := New(bytes.NewReader(data))
+	if _, _, _, _, err := dec.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader failed: %v", err)
+	}
+	if err := dec.StartDecompress(); err != nil {
+		t.Fatalf("StartDecompress failed: %v", err)
+	}
+
+	stride := dec.OutputWidth() * dec.OutputComponents()
+	row := make([]byte, stride)
+	for dec.OutputScanline() < dec.OutputHeight() {
+		n, err := dec.ReadScanlines([][]byte{row})
+		if err != nil {
+			t.Fatalf("ReadScanlines failed: %v", err)
+		}
+		if n == 0 {
+			t.Fatal("ReadScanlines returned 0 before output completed")
+		}
+	}
+	if dec.componentBuf == nil {
+		t.Fatal("componentBuf was released before FinishDecompress")
+	}
+	if _, _, ok := dec.QuantizationTable(0); !ok {
+		t.Fatal("QuantizationTable(0) missing before FinishDecompress")
+	}
+
+	if err := dec.FinishDecompress(); err != nil {
+		t.Fatalf("FinishDecompress failed: %v", err)
+	}
+
+	if dec.componentBuf != nil {
+		t.Fatal("componentBuf was not released")
+	}
+	if dec.scanData != nil {
+		t.Fatal("scanData was not released")
+	}
+	if dec.colorConv != nil {
+		t.Fatal("colorConv was not released")
+	}
+	if dec.memoryUsed != 0 {
+		t.Fatalf("memoryUsed = %d, want 0", dec.memoryUsed)
+	}
+	if _, _, ok := dec.QuantizationTable(0); !ok {
+		t.Fatal("QuantizationTable(0) should remain available after scratch release")
+	}
+}
+
 func TestReadHeaderNotJPEG(t *testing.T) {
 	t.Parallel()
 
